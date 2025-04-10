@@ -80,7 +80,11 @@ export default function POSSystem({ products, profile, storeId }) {
         .select()
         .single()
 
-      if (saleError) throw saleError
+        if (saleError) {
+          console.error("Error inserting sale:", saleError);
+          throw saleError;
+        }
+        console.log("Sale inserted:", sale); // Verifica el registro insertado
 
       // Crear items de venta
       const saleItems = cart.map((item) => ({
@@ -92,8 +96,11 @@ export default function POSSystem({ products, profile, storeId }) {
       }))
 
       const { error: itemsError } = await supabase.from("sale_items").insert(saleItems)
-
-      if (itemsError) throw itemsError
+      
+      if (itemsError) {
+        console.error("Error inserting sale items:", itemsError);
+        throw itemsError;
+      }
 
       // Actualizar inventario (si existe la tabla)
       try {

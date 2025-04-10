@@ -1,95 +1,97 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function SalesReport({ profile, stores }) {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [salesData, setSalesData] = useState([])
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [salesData, setSalesData] = useState([]);
   const [filters, setFilters] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
-    storeId: profile?.is_admin ? "" : profile?.store_id?.toString() || "",
-  })
+    storeId: profile?.is_admin ? "" : profile?.stores?.id?.toString() || "",
+  });
   const [summary, setSummary] = useState({
     totalSales: 0,
     totalAmount: 0,
     averageAmount: 0,
-  })
+  });
 
-  // Cargar datos de ventas
   useEffect(() => {
-    fetchSalesData()
-  }, [])
+    fetchSalesData();
+  }, []);
 
   const fetchSalesData = async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
 
     try {
-      const supabase = getSupabaseBrowser()
+      const supabase = getSupabaseBrowser();
 
+      // Construir la consulta con todos los filtros antes de ejecutarla
       let query = supabase
         .from("sales")
         .select(`
           *,
-          stores(*),
-          profiles:created_by(full_name)
+          stores!fk_store_id(*),
+          profiles!fk_created_by(full_name)
         `)
-        .gte("created_at", `${filters.startDate}T00:00:00`)
-        .lte("created_at", `${filters.endDate}T23:59:59`)
-        .order("created_at", { ascending: false })
+        .gte("created_at", `${filters.startDate}T00:00:00Z`) // Asegurar formato UTC
+        .lte("created_at", `${filters.endDate}T23:59:59.999Z`) // Cubrir todo el día
+        .order("created_at", { ascending: false });
 
-      // Filtrar por tienda si se seleccionó una
+      // Aplicar filtro de tienda según el rol
       if (filters.storeId) {
-        query = query.eq("store_id", filters.storeId)
+        query = query.eq("store_id", filters.storeId);
       } else if (!profile?.is_admin) {
-        // Si no es admin, solo mostrar ventas de su tienda
-        query = query.eq("store_id", profile.store_id)
+        query = query.eq("store_id", profile.stores?.id);
       }
 
-      const { data, error } = await query
+      // Ejecutar la consulta una sola vez
+      const { data, error } = await query;
+      if (error) throw error;
 
-      if (error) throw error
+      console.log("Sales data fetched:", data);
+      console.log("Filters applied:", filters);
+      console.log("Profile:", profile);
 
-      setSalesData(data || [])
+      setSalesData(data || []);
 
-      // Calcular resumen
       if (data && data.length > 0) {
-        const totalAmount = data.reduce((sum, sale) => sum + sale.total_amount, 0)
+        const totalAmount = data.reduce((sum, sale) => sum + sale.total_amount, 0);
         setSummary({
           totalSales: data.length,
           totalAmount,
           averageAmount: totalAmount / data.length,
-        })
+        });
       } else {
         setSummary({
           totalSales: 0,
           totalAmount: 0,
           averageAmount: 0,
-        })
+        });
       }
     } catch (error) {
-      console.error("Error fetching sales data:", error)
-      setError(error.message || "Error al cargar los datos de ventas")
+      console.error("Error fetching sales data:", error);
+      setError(error.message || "Error al cargar los datos de ventas");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleFilterChange = (e) => {
-    const { name, value } = e.target
+    const { name, value } = e.target;
     setFilters((prev) => ({
       ...prev,
       [name]: value,
-    }))
-  }
+    }));
+  };
 
   const handleApplyFilters = (e) => {
-    e.preventDefault()
-    fetchSalesData()
-  }
+    e.preventDefault();
+    fetchSalesData();
+  };
 
   return (
     <div>
@@ -251,5 +253,5 @@ export default function SalesReport({ profile, stores }) {
         </table>
       </div>
     </div>
-  )
+  );
 }

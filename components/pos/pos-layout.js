@@ -10,7 +10,6 @@ import Link from "next/link"
 import { getSupabaseBrowser } from "@/lib/supabase"
 
 export default function PosLayout({ categories, products, store, user }) {
-  console.log("PosLayout passing store:", store);
   const router = useRouter()
   const [selectedCategory, setSelectedCategory] = useState(null)
   const [filteredProducts, setFilteredProducts] = useState(products)

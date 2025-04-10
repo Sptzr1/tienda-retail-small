@@ -129,7 +129,7 @@
                           </div>
                           <div className="ml-4">
                             <h2 className="text-xl font-semibold">Reportes</h2>
-                            <p className="mt-1 text-gray-600">Ver estadísticas y ventas</p>
+                            <p className="mt-1 text-gray-600">Visualiza informes de ventas, inventario y rendimiento.</p>
                           </div>
                         </div>
                       </Link>
