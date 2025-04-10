@@ -1,78 +1,80 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import ProductGrid from "./product-grid"
-import Cart from "./cart"
-import CategoryTabs from "./category-tabs"
-import { Home, LogOut } from "lucide-react"
-import Link from "next/link"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import ProductGrid from "./product-grid";
+import Cart from "./cart";
+import CategoryTabs from "./category-tabs";
+import { Home, LogOut } from "lucide-react";
+import Link from "next/link";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function PosLayout({ categories, products, store, user }) {
-  const router = useRouter()
-  const [selectedCategory, setSelectedCategory] = useState(null)
-  const [filteredProducts, setFilteredProducts] = useState(products)
-  const [cart, setCart] = useState([])
+  const router = useRouter();
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [filteredProducts, setFilteredProducts] = useState(products);
+  const [cart, setCart] = useState([]);
 
   // Filter products when category changes
   useEffect(() => {
     if (selectedCategory) {
-      setFilteredProducts(products.filter((product) => product.category_id === selectedCategory))
+      setFilteredProducts(products.filter((product) => product.category_id === selectedCategory));
     } else {
-      setFilteredProducts(products)
+      setFilteredProducts(products);
     }
-  }, [selectedCategory, products])
+  }, [selectedCategory, products]);
 
   // Add product to cart
   const addToCart = (product) => {
     setCart((prevCart) => {
       // Check if product is already in cart
-      const existingItem = prevCart.find((item) => item.id === product.id)
+      const existingItem = prevCart.find((item) => item.id === product.id);
 
       if (existingItem) {
         // Increase quantity if already in cart
-        return prevCart.map((item) => (item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item))
+        return prevCart.map((item) =>
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
       } else {
         // Add new item to cart
-        return [...prevCart, { ...product, quantity: 1 }]
+        return [...prevCart, { ...product, quantity: 1 }];
       }
-    })
-  }
+    });
+  };
 
   // Update cart item quantity
   const updateQuantity = (productId, quantity) => {
     setCart((prevCart) => {
       if (quantity <= 0) {
         // Remove item if quantity is 0 or less
-        return prevCart.filter((item) => item.id !== productId)
+        return prevCart.filter((item) => item.id !== productId);
       }
 
       // Update quantity
-      return prevCart.map((item) => (item.id === productId ? { ...item, quantity } : item))
-    })
-  }
+      return prevCart.map((item) => (item.id === productId ? { ...item, quantity } : item));
+    });
+  };
 
   // Remove item from cart
   const removeItem = (productId) => {
-    setCart((prevCart) => prevCart.filter((item) => item.id !== productId))
-  }
+    setCart((prevCart) => prevCart.filter((item) => item.id !== productId));
+  };
 
   // Clear cart
   const clearCart = () => {
-    setCart([])
-  }
+    setCart([]);
+  };
 
   const handleLogout = async () => {
     try {
-      const supabase = getSupabaseBrowser()
-      await supabase.auth.signOut()
-      router.push("/auth/login")
-      router.refresh()
+      const supabase = getSupabaseBrowser();
+      await supabase.auth.signOut();
+      router.push("/auth/login");
+      router.refresh();
     } catch (error) {
-      console.error("Error signing out:", error)
+      console.error("Error signing out:", error);
     }
-  }
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
@@ -123,11 +125,12 @@ export default function PosLayout({ categories, products, store, user }) {
             removeItem={removeItem}
             clearCart={clearCart}
             storeId={store.id}
-            storeName={store?.name}
+            storeName={store.name}
+            profile={user} // Pasamos user como profile a Cart
           />
         </div>
       </div>
     </div>
-  )
+  );
 }
 

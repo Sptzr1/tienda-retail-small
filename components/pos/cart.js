@@ -1,19 +1,88 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Minus, Plus, Trash2, Printer } from "lucide-react";
 import { getSupabaseBrowser } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-export default function Cart({ items, updateQuantity, removeItem, clearCart, storeId, storeName }) {
+export default function Cart({ items, updateQuantity, removeItem, clearCart, storeId, storeName, profile: profileProp }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
-  const [showPrintModal, setShowPrintModal] = useState(false); // Estado para el modal
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [completedOrder, setCompletedOrder] = useState(null);
-  const printFrameRef = useRef(null); // Ref para el iframe de impresión
+  const [profile, setProfile] = useState(null); // Estado local para el perfil
+  const [dynamicStoreId, setDynamicStoreId] = useState(""); // Inicializamos vacío hasta que profile esté listo
+  const [stores, setStores] = useState([]);
+  const printFrameRef = useRef(null);
 
   console.log("Cart received storeId:", storeId);
+  console.log("Cart received storeName:", storeName);
+  console.log("Cart received profileProp:", profileProp);
+
+  // Obtener el perfil del usuario autenticado si no se pasa como prop
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const supabase = getSupabaseBrowser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        console.error("Error fetching user:", userError);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, role, store_id")
+        .eq("id", user.id)
+        .single();
+
+      if (error) {
+        console.error("Error fetching profile:", error);
+      } else {
+        setProfile(data);
+        setDynamicStoreId(data.role === "normal" ? storeId : "");
+      }
+    };
+
+    if (profileProp) {
+      setProfile(profileProp);
+      setDynamicStoreId(profileProp.role === "normal" ? storeId : "");
+    } else {
+      fetchProfile();
+    }
+  }, [profileProp, storeId]);
+
+  // Cargar las tiendas disponibles según el rol del usuario
+  useEffect(() => {
+    if (!profile || (profile.role !== "superadmin" && profile.role !== "manager")) return;
+
+    const fetchStores = async () => {
+      const supabase = getSupabaseBrowser();
+      let query = supabase.from("stores").select("*");
+
+      if (profile.role === "manager") {
+        const { data: assignedStores, error: storesError } = await supabase
+          .from("manager_stores")
+          .select("store_id")
+          .eq("user_id", profile.id);
+        if (storesError) {
+          console.error("Error fetching assigned stores:", storesError);
+          return;
+        }
+        const storeIds = assignedStores.map((s) => s.store_id);
+        query = query.in("id", storeIds);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error("Error fetching stores:", error);
+      } else {
+        setStores(data || []);
+        if (profile.role === "manager" && data.length > 0) setDynamicStoreId(data[0].id);
+      }
+    };
+    fetchStores();
+  }, [profile]);
 
   // Calculate subtotal
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -28,10 +97,17 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
   const handleCheckout = async () => {
     if (items.length === 0) return;
 
-    console.log("handleCheckout - storeId before insertion:", storeId);
-    if (!storeId || isNaN(storeId)) {
-      console.error("storeId is invalid:", storeId);
-      alert("Error: ID de tienda inválido. Por favor, intenta de nuevo.");
+    if (!profile) {
+      alert("Error: Perfil de usuario no cargado. Por favor, intenta de nuevo.");
+      return;
+    }
+
+    const finalStoreId = profile.role === "normal" ? storeId : dynamicStoreId;
+    console.log("handleCheckout - finalStoreId before insertion:", finalStoreId);
+
+    if (!finalStoreId || isNaN(finalStoreId)) {
+      console.error("finalStoreId is invalid:", finalStoreId);
+      alert("Error: ID de tienda inválido. Por favor, selecciona una tienda.");
       return;
     }
 
@@ -41,14 +117,14 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
       const supabase = getSupabaseBrowser();
 
       const saleData = {
-        store_id: Number(storeId),
+        store_id: Number(finalStoreId),
         total_amount: total,
-        tax_amount: tax, // Nuevo campo
-        status: "completed", // Nuevo campo
+        tax_amount: tax,
+        status: "completed",
         items_count: items.reduce((sum, item) => sum + item.quantity, 0),
         created_by: profile.id,
       };
-      console.log("Data sent to Supabase (newsales):", saleData);
+      console.log("Data sent to Supabase (sales):", saleData);
 
       const { data: sale, error: saleError } = await supabase
         .from("sales")
@@ -90,8 +166,8 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
         tax,
         total,
         store: {
-          id: storeId,
-          name: storeName,
+          id: finalStoreId,
+          name: profile.role === "normal" ? storeName : stores.find((s) => s.id === Number(finalStoreId))?.name || "Unknown",
         },
       });
 
@@ -332,6 +408,23 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
       <div className="p-4 border-b">
         <h2 className="text-lg font-semibold">Carrito de compra</h2>
       </div>
+
+      {(profile && (profile.role === "superadmin" || profile.role === "manager")) && (
+        <div className="p-4">
+          <label htmlFor="dynamicStoreId" className="block text-sm font-medium text-gray-700">Tienda</label>
+          <select
+            id="dynamicStoreId"
+            value={dynamicStoreId}
+            onChange={(e) => setDynamicStoreId(e.target.value)}
+            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+          >
+            <option value="">Selecciona una tienda</option>
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>{store.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="flex-1 overflow-auto">
         {items.length === 0 ? (

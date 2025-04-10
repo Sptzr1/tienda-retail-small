@@ -9,17 +9,14 @@ export default async function ReportsPage() {
   const cookieStore = cookies();
   const supabase = createServerComponentClient({ cookies: () => cookieStore });
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
+  const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
-    redirect("/auth/login");
+    redirect("/auth/login?redirectedFrom=/admin/reportes");
   }
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("*, stores(*)")
+    .select("id, full_name, role, store_id")
     .eq("id", session.user.id)
     .single();
 
@@ -28,32 +25,31 @@ export default async function ReportsPage() {
     return <div>Error al cargar el perfil</div>;
   }
 
-  if (!profile?.stores?.id && !profile?.is_admin) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="bg-white shadow-sm rounded-lg p-6">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">No tienes una tienda asignada</h1>
-            <p className="text-gray-600 mb-4">
-              Para acceder a los reportes, necesitas tener una tienda asignada. Por favor, contacta con un administrador
-              para que te asigne a una tienda.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+  // Permitir solo a superadmin y manager
+  if (profile.role !== "superadmin" && profile.role !== "manager") {
+    redirect("/");
   }
 
   let stores = [];
-  if (profile?.is_admin) {
+  let storeId = null;
+
+  if (profile.role === "superadmin") {
     const { data: storesData, error: storesError } = await supabase.from("stores").select("id, name").order("name");
     if (storesError) console.error("Stores error:", storesError);
     stores = storesData || [];
-  } else {
-    stores = [profile?.stores];
+  } else if (profile.role === "manager") {
+    const { data: assignedStores, error: storesError } = await supabase
+      .from("manager_stores")
+      .select("store_id, stores(id, name)")
+      .eq("user_id", profile.id);
+    if (storesError || !assignedStores || assignedStores.length === 0) {
+      console.error("Stores error or no stores assigned:", storesError);
+      redirect("/"); // Redirige si no tiene tiendas asignadas
+    }
+    stores = assignedStores.map((s) => s.stores);
+    storeId = stores[0].id; // Usar la primera tienda por defecto
   }
 
-  const storeId = profile?.stores?.id || (profile?.is_admin ? null : 0);
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
   const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString();
@@ -69,10 +65,10 @@ export default async function ReportsPage() {
     `)
     .gte("created_at", firstDayOfMonth)
     .lte("created_at", lastDayOfMonth)
-    .order("created_at", { ascending: false }); 
+    .order("created_at", { ascending: false });
 
-  if (!profile?.is_admin) {
-    salesQuery = salesQuery.eq("store_id", storeId);
+  if (profile.role === "manager") {
+    salesQuery = salesQuery.in("store_id", stores.map((s) => s.id));
   }
 
   const { data: monthlySales, error: salesError } = await salesQuery;
@@ -83,8 +79,8 @@ export default async function ReportsPage() {
 
   const topProductsQuery = supabase.rpc("get_top_products", {
     limit_count: 10,
-    store_filter: storeId || null,
-    is_admin: profile?.is_admin || false,
+    store_filter: profile.role === "manager" ? storeId : null,
+    is_admin: profile.role === "superadmin",
     start_date: firstDayOfMonth,
     end_date: lastDayOfMonth,
   });
@@ -110,8 +106,8 @@ export default async function ReportsPage() {
     `)
     .order("quantity");
 
-  if (!profile?.is_admin) {
-    lowStockQuery = lowStockQuery.eq("store_id", storeId);
+  if (profile.role === "manager") {
+    lowStockQuery = lowStockQuery.in("store_id", stores.map((s) => s.id));
   }
 
   const { data: lowStockProductsRaw, error: lowStockError } = await lowStockQuery;
@@ -124,8 +120,8 @@ export default async function ReportsPage() {
 
   const dailySalesQuery = supabase.rpc("get_daily_sales", {
     days_count: 30,
-    store_filter: storeId || null,
-    is_admin: profile?.is_admin || false,
+    store_filter: profile.role === "manager" ? storeId : null,
+    is_admin: profile.role === "superadmin",
   });
 
   const { data: dailySales, error: dailySalesError } = await dailySalesQuery;

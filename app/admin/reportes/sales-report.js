@@ -1,4 +1,4 @@
-"use client";
+/* "use client";
 
 import { useState, useEffect } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase";
@@ -147,6 +147,145 @@ export default function SalesReport({ profile, stores }) {
             </div>
           )}
 
+          <div className="md:col-span-3 flex justify-end">
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              {loading ? "Cargando..." : "Aplicar Filtros"}
+            </button>
+          </div>
+        </div>
+      </form> */
+"use client";
+
+import { useState, useEffect } from "react";
+import { getSupabaseBrowser } from "@/lib/supabase";
+
+export default function SalesReport({ profile, stores }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [salesData, setSalesData] = useState([]);
+  const [filters, setFilters] = useState({
+    startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split("T")[0],
+    endDate: new Date().toISOString().split("T")[0],
+    storeId: profile.role === "superadmin" ? "" : profile.store_id?.toString() || "",
+  });
+  const [summary, setSummary] = useState({ totalSales: 0, totalAmount: 0, averageAmount: 0 });
+
+  useEffect(() => {
+    fetchSalesData();
+  }, []);
+
+  const fetchSalesData = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const supabase = getSupabaseBrowser();
+      let query = supabase
+        .from("sales")
+        .select(`
+          *,
+          stores!fk_store_id(*),
+          profiles!fk_created_by(full_name)
+        `)
+        .gte("created_at", `${filters.startDate}T00:00:00Z`)
+        .lte("created_at", `${filters.endDate}T23:59:59.999Z`)
+        .order("created_at", { ascending: false });
+
+      if (profile.role === "superadmin") {
+        if (filters.storeId) query = query.eq("store_id", filters.storeId);
+      } else if (profile.role === "manager") {
+        const { data: assignedStores } = await supabase
+          .from("manager_stores")
+          .select("store_id")
+          .eq("user_id", profile.id);
+        const storeIds = assignedStores.map((s) => s.store_id);
+        query = query.in("store_id", storeIds);
+        if (filters.storeId) query = query.eq("store_id", filters.storeId);
+      } else {
+        query = query.eq("store_id", profile.store_id);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      setSalesData(data || []);
+      console.log("Sales data:", data);
+
+      if (data && data.length > 0) {
+        const totalAmount = data.reduce((sum, sale) => sum + sale.total_amount, 0);
+        setSummary({
+          totalSales: data.length,
+          totalAmount,
+          averageAmount: totalAmount / data.length,
+        });
+      } else {
+        setSummary({ totalSales: 0, totalAmount: 0, averageAmount: 0 });
+      }
+    } catch (error) {
+      console.error("Error fetching sales data:", error);
+      setError(error.message || "Error al cargar los datos de ventas");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFilterChange = (e) => {
+    const { name, value } = e.target;
+    setFilters((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleApplyFilters = (e) => {
+    e.preventDefault();
+    fetchSalesData();
+  };
+
+  return (
+    <div>
+      <form onSubmit={handleApplyFilters} className="mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">Fecha Inicio</label>
+            <input
+              type="date"
+              id="startDate"
+              name="startDate"
+              value={filters.startDate}
+              onChange={handleFilterChange}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">Fecha Fin</label>
+            <input
+              type="date"
+              id="endDate"
+              name="endDate"
+              value={filters.endDate}
+              onChange={handleFilterChange}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+            />
+          </div>
+          {(profile.role === "superadmin" || profile.role === "manager") && (
+            <div>
+              <label htmlFor="storeId" className="block text-sm font-medium text-gray-700">Tienda</label>
+              <select
+                id="storeId"
+                name="storeId"
+                value={filters.storeId}
+                onChange={handleFilterChange}
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              >
+                <option value="">Todas las tiendas</option>
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id}>{store.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="md:col-span-3 flex justify-end">
             <button
               type="submit"

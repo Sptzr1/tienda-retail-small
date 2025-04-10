@@ -1,12 +1,13 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function ProductForm({ categories }) {
-  const router = useRouter()
-  const [loading, setLoading] = useState(false)
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [stores, setStores] = useState([]);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -16,36 +17,92 @@ export default function ProductForm({ categories }) {
     type: "",
     stock: "",
     image_url: "",
-  })
+    store_id: "",
+  });
+
+  useEffect(() => {
+    async function fetchStores() {
+      const supabase = getSupabaseBrowser();
+      const { data: user } = await supabase.auth.getUser();
+      if (!user?.user) {
+        console.error("No authenticated user found");
+        return;
+      }
+      const { data, error } = await supabase
+        .from("manager_stores")
+        .select("store_id, stores(name)")
+        .eq("user_id", user.user.id);
+
+      if (error) {
+        console.error("Error fetching stores:", error);
+      } else {
+        setStores(data.map((s) => ({ id: s.store_id, name: s.stores.name })));
+        if (data.length > 0) {
+          setFormData((prev) => ({ ...prev, store_id: data[0].store_id }));
+        }
+      }
+    }
+    fetchStores();
+  }, []);
 
   const handleChange = (e) => {
-    const { name, value } = e.target
+    const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
       [name]: value,
-    }))
-  }
+    }));
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
+    e.preventDefault();
+    setLoading(true);
 
     try {
-      // Convert numeric fields
+      if (!formData.store_id) {
+        throw new Error("Por favor selecciona una tienda");
+      }
+
       const productData = {
         ...formData,
         price: Number.parseFloat(formData.price),
         cost: Number.parseFloat(formData.cost),
         stock: Number.parseInt(formData.stock),
         category_id: formData.category_id ? Number.parseInt(formData.category_id) : null,
+        store_id: Number.parseInt(formData.store_id),
+      };
+
+      console.log("Submitting product data:", productData);
+
+      const supabase = getSupabaseBrowser();
+      const { data: user } = await supabase.auth.getUser();
+      if (!user?.user) {
+        throw new Error("No authenticated user found");
+      }
+      console.log("Current user ID:", user.user.id);
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.user.id)
+        .single();
+      console.log("User profile:", profile);
+
+      const { data: stores } = await supabase
+        .from("manager_stores")
+        .select("store_id")
+        .eq("user_id", user.user.id);
+      console.log("Assigned stores:", stores);
+
+      console.log("Attempting to insert product...");
+      const { data, error } = await supabase.from("products").insert([productData]).select();
+
+      if (error) {
+        console.error("Insert error details:", error);
+        throw error;
       }
 
-      const supabase = getSupabaseBrowser()
-      const { error } = await supabase.from("products").insert([productData])
+      console.log("Insert successful, data:", data);
 
-      if (error) throw error
-
-      // Reset form and refresh data
       setFormData({
         name: "",
         description: "",
@@ -55,16 +112,17 @@ export default function ProductForm({ categories }) {
         type: "",
         stock: "",
         image_url: "",
-      })
+        store_id: stores[0]?.id || "",
+      });
 
-      router.refresh()
+      router.refresh();
     } catch (error) {
-      console.error("Error adding product:", error)
-      alert("Error al guardar el producto")
+      console.error("Error adding product:", error);
+      alert("Error al guardar el producto: " + error.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 space-y-4">
@@ -82,6 +140,27 @@ export default function ProductForm({ categories }) {
             onChange={handleChange}
             className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
           />
+        </div>
+
+        <div className="sm:col-span-3">
+          <label htmlFor="store_id" className="block text-sm font-medium text-gray-700">
+            Tienda
+          </label>
+          <select
+            id="store_id"
+            name="store_id"
+            required
+            value={formData.store_id}
+            onChange={handleChange}
+            className="mt-1 block w-full bg-white border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+          >
+            <option value="">Seleccionar tienda</option>
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="sm:col-span-3">
@@ -217,6 +296,5 @@ export default function ProductForm({ categories }) {
         </button>
       </div>
     </form>
-  )
+  );
 }
-
