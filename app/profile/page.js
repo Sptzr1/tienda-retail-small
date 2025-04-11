@@ -6,7 +6,7 @@ import UserProfile from "@/components/profile/user-profile"
 export const dynamic = "force-dynamic"
 
 export default async function ProfilePage() {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const supabase = createServerComponentClient({ cookies: () => cookieStore })
 
   // Verificar si el usuario está autenticado

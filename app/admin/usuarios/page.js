@@ -6,7 +6,7 @@ import Link from "next/link"
 export const dynamic = "force-dynamic"
 
 export default async function UsuariosPage() {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const supabase = createServerComponentClient({ cookies: () => cookieStore })
 
   // Verificar si el usuario es administrador
