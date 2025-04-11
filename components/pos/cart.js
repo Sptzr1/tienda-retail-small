@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Minus, Plus, Trash2, Printer } from "lucide-react";
 import { getSupabaseBrowser } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -11,16 +11,11 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
   const [showReceipt, setShowReceipt] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [completedOrder, setCompletedOrder] = useState(null);
-  const [profile, setProfile] = useState(null); // Estado local para el perfil
-  const [dynamicStoreId, setDynamicStoreId] = useState(""); // Inicializamos vacío hasta que profile esté listo
+  const [profile, setProfile] = useState(null);
+  const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
-  const printFrameRef = useRef(null);
 
-  console.log("Cart received storeId:", storeId);
-  console.log("Cart received storeName:", storeName);
-  console.log("Cart received profileProp:", profileProp);
-
-  // Obtener el perfil del usuario autenticado si no se pasa como prop
+  // Obtener el perfil del usuario autenticado
   useEffect(() => {
     const fetchProfile = async () => {
       const supabase = getSupabaseBrowser();
@@ -84,15 +79,33 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
     fetchStores();
   }, [profile]);
 
-  // Calculate subtotal
+  // Calcular subtotal, IVA y total
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-  // Calculate tax (16%)
   const taxRate = 0.16;
   const tax = subtotal * taxRate;
-
-  // Calculate total
   const total = subtotal + tax;
+
+  // Función para imprimir el ticket enviando datos al endpoint
+const printTicket = async (order) => {
+  try {
+    const response = await fetch("/api/print-ticket", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(order),
+    });
+
+    const data = await response.json(); // Parsear la respuesta como JSON
+
+    if (!response.ok) {
+      throw new Error(data.error || "Error en la impresión");
+    }
+
+    console.log("Ticket printed successfully:", data);
+  } catch (error) {
+    console.error("Error printing ticket:", error);
+    alert("Error al imprimir el ticket: " + error.message);
+  }
+};
 
   const handleCheckout = async () => {
     if (items.length === 0) return;
@@ -156,7 +169,7 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
         if (stockError) throw stockError;
       }
 
-      setCompletedOrder({
+      const order = {
         ...sale,
         items: items.map((item) => ({
           ...item,
@@ -169,11 +182,15 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
           id: finalStoreId,
           name: profile.role === "normal" ? storeName : stores.find((s) => s.id === Number(finalStoreId))?.name || "Unknown",
         },
-      });
+      };
 
+      setCompletedOrder(order);
       setShowReceipt(true);
       clearCart();
       router.refresh();
+
+      // Imprimir automáticamente después de completar la venta
+      await printTicket(order);
     } catch (error) {
       console.error("Error processing checkout:", error);
       alert("Error al procesar la venta: " + error.message);
@@ -183,61 +200,9 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
   };
 
   const handlePrint = () => {
-    if (!completedOrder || !printFrameRef.current) return;
-
-    const frameWindow = printFrameRef.current.contentWindow;
-    frameWindow.document.open();
-    frameWindow.document.write(`
-      <html>
-        <head>
-          <title>Recibo de Venta</title>
-          <style>
-            body { font-family: 'Courier New', monospace; font-size: 12px; width: 80mm; margin: 0; padding: 10px; }
-            .header { text-align: center; margin-bottom: 10px; }
-            .store-name { font-size: 16px; font-weight: bold; }
-            .info { margin-bottom: 10px; }
-            .divider { border-top: 1px dashed #000; margin: 10px 0; }
-            .item { display: flex; justify-content: space-between; margin-bottom: 5px; }
-            .total { font-weight: bold; text-align: right; margin-top: 10px; font-size: 14px; }
-            .footer { text-align: center; margin-top: 20px; font-size: 10px; }
-            @media print { @page { size: 80mm auto; margin: 0; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="store-name">${completedOrder.store.name}</div>
-            <div>Recibo de Venta</div>
-          </div>
-          <div class="info">
-            <div>Venta #: ${completedOrder.id}</div>
-            <div>Fecha: ${new Date(completedOrder.created_at).toLocaleString()}</div>
-          </div>
-          <div class="divider"></div>
-          <div class="items">
-            ${completedOrder.items
-              .map((item) => `
-                <div class="item">
-                  <div>${item.quantity} x ${item.name}</div>
-                  <div>$${item.total.toFixed(2)}</div>
-                </div>
-              `)
-              .join("")}
-          </div>
-          <div class="divider"></div>
-          <div class="total">
-            Subtotal: $${completedOrder.subtotal.toFixed(2)}<br>
-            IVA (16%): $${completedOrder.tax.toFixed(2)}<br>
-            TOTAL: $${completedOrder.total.toFixed(2)}
-          </div>
-          <div class="footer">
-            ¡Gracias por su compra!
-          </div>
-        </body>
-      </html>
-    `);
-    frameWindow.document.close();
-    frameWindow.focus();
-    frameWindow.print();
+    if (!completedOrder) return;
+    // Reutilizar la misma función de impresión para el botón del modal
+    printTicket(completedOrder);
   };
 
   const handleShowPrintModal = () => {
