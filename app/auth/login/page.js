@@ -1,151 +1,166 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import Link from "next/link"
-import { getSupabaseBrowser, createSession } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { getSupabaseBrowser, createSession } from "@/lib/supabase";
 
 export default function LoginPage() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const redirectTo = searchParams.get("redirectedFrom") || "/"
-  const errorParam = searchParams.get("error")
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirectedFrom") || "/";
+  const errorParam = searchParams.get("error");
 
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [emailToVerify, setEmailToVerify] = useState("");
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [userIdForDeferred, setUserIdForDeferred] = useState(null);
 
-  // Añadir estos estados al inicio del componente, justo después de los estados existentes
-  const [emailToVerify, setEmailToVerify] = useState("")
-  const [verificationSent, setVerificationSent] = useState(false)
-  const [verificationLoading, setVerificationLoading] = useState(false)
-
-  // Mostrar mensaje de error si viene en la URL
+  // Check if already logged in
   useEffect(() => {
-    if (errorParam === "session_expired") {
-      setError("Tu sesión ha expirado. Por favor, inicia sesión nuevamente.")
-    }
-  }, [errorParam])
+    const checkSession = async () => {
+      const supabase = getSupabaseBrowser();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        router.push(redirectTo);
+      }
+    };
+    checkSession();
+  }, [router, redirectTo]);
 
-  // Modificar la función handleLogin para manejar el error de "email not confirmed"
+  // Handle deferred tasks (session, temp password, profile, products)
+  useEffect(() => {
+    if (!userIdForDeferred) return;
+
+    const performDeferredTasks = async () => {
+      const supabase = getSupabaseBrowser();
+      try {
+        const [tempPasswordResult, profileResult, productResult] = await Promise.all([
+          supabase
+            .from("temp_passwords")
+            .select("id")
+            .eq("user_id", userIdForDeferred)
+            .eq("used", false)
+            .single()
+            .catch(() => ({ data: null, error: null })),
+          supabase
+            .from("profiles")
+            .select("force_password_change")
+            .eq("id", userIdForDeferred)
+            .single()
+            .catch(() => ({ data: { force_password_change: false }, error: null })),
+          redirectTo === "/"
+            ? supabase.from("products").select("id,name,price").limit(10)
+            : Promise.resolve(),
+        ]);
+
+        console.log("Deferred tasks results:", {
+          tempPassword: tempPasswordResult.data,
+          profile: profileResult.data,
+          product: productResult?.data,
+        });
+
+        await Promise.all([
+          createSession(supabase, userIdForDeferred).catch((e) => {
+            console.error("createSession failed:", e);
+            return null;
+          }),
+          tempPasswordResult.data
+            ? supabase
+                .from("temp_passwords")
+                .update({ used: true })
+                .eq("id", tempPasswordResult.data.id)
+                .catch((e) => {
+                  console.error("temp_passwords update failed:", e);
+                  return null;
+                })
+            : Promise.resolve(),
+        ]);
+
+        if (tempPasswordResult.data || profileResult.data?.force_password_change) {
+          console.log("Redirecting to /auth/change-password");
+          router.push("/auth/change-password");
+          router.refresh();
+        } else {
+          console.log("Redirecting to:", redirectTo);
+          router.push(redirectTo);
+          router.refresh();
+        }
+      } catch (error) {
+        console.error("Error in deferred tasks:", error);
+        router.push(redirectTo);
+        router.refresh();
+      }
+    };
+
+    performDeferredTasks();
+  }, [userIdForDeferred, router, redirectTo]);
+
   const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    setEmailToVerify("")
-    setVerificationSent(false)
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setEmailToVerify("");
+    setVerificationSent(false);
+
+    console.log("Login attempt:", { email, password }); // Debug input
+
+    const start = performance.now();
 
     try {
-      const supabase = getSupabaseBrowser()
+      const supabase = getSupabaseBrowser();
+      const loginResult = await supabase.auth.signInWithPassword({ email, password });
 
-      // Verificar si es una contraseña temporal
-      const { data: tempPasswordData } = await supabase
-        .from("temp_passwords")
-        .select("*")
-        .eq("temp_password", password)
-        .eq("used", false)
-        .single()
-
-      let loginResult
-
-      if (tempPasswordData) {
-        // Iniciar sesión con contraseña temporal
-        loginResult = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-
-        if (loginResult.error) throw loginResult.error
-
-        // Marcar la contraseña temporal como usada
-        await supabase.from("temp_passwords").update({ used: true }).eq("id", tempPasswordData.id)
-
-        // Crear sesión
-        await createSession(supabase, loginResult.data.user.id)
-
-        // Redirigir a cambio de contraseña
-        router.push("/auth/change-password")
-      } else {
-        // Iniciar sesión normal
-        loginResult = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-
-        if (loginResult.error) {
-          // Verificar si el error es "Email not confirmed"
-          if (
-            loginResult.error.message === "Email not confirmed" ||
-            loginResult.error.message.includes("not confirmed")
-          ) {
-            setEmailToVerify(email)
-            throw new Error("El correo electrónico no ha sido verificado.")
-          }
-          throw loginResult.error
+      if (loginResult.error) {
+        console.log("Login error details:", loginResult.error);
+        if (loginResult.error.message.includes("not confirmed")) {
+          setEmailToVerify(email);
+          throw new Error("El correo electrónico no ha sido verificado.");
         }
-
-        // Crear sesión
-        await createSession(supabase, loginResult.data.user.id)
-
-        // Verificar si necesita cambiar contraseña
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("force_password_change")
-          .eq("id", loginResult.data.user.id)
-          .single()
-
-        if (profile?.force_password_change) {
-          router.push("/auth/change-password")
-        } else {
-          router.push(redirectTo)
-        }
+        throw loginResult.error;
       }
 
-      router.refresh()
+      console.log(`Login validation took ${performance.now() - start} ms`);
+      setUserIdForDeferred(loginResult.data.user.id);
     } catch (error) {
-      console.error("Error logging in:", error)
-      setError(error.message || "Error al iniciar sesión")
+      console.error("Error logging in:", error);
+      setError(error.message || "Error al iniciar sesión. Verifica tu correo y contraseña.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  // Añadir función para reenviar el correo de verificación
   const handleResendVerification = async () => {
-    if (!emailToVerify) return
+    if (!emailToVerify) return;
 
-    setVerificationLoading(true)
+    setVerificationLoading(true);
     try {
-      const supabase = getSupabaseBrowser()
-
+      const supabase = getSupabaseBrowser();
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: emailToVerify,
-      })
+      });
 
-      if (error) throw error
+      if (error) throw error;
 
-      setVerificationSent(true)
+      setVerificationSent(true);
     } catch (error) {
-      console.error("Error resending verification:", error)
-      setError("Error al reenviar el correo de verificación: " + error.message)
+      console.error("Error resending verification:", error);
+      setError("Error al reenviar el correo de verificación: " + error.message);
     } finally {
-      setVerificationLoading(false)
+      setVerificationLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Iniciar sesión</h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            O{" "}
-            <Link href="/auth/register" className="font-medium text-blue-600 hover:text-blue-500">
-              regístrate si aún no tienes cuenta
-            </Link>
-          </p>
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
@@ -248,6 +263,5 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
-  )
+  );
 }
-

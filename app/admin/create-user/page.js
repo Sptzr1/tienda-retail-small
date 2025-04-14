@@ -1,38 +1,77 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function CreateUserPage() {
   const router = useRouter();
-
   const [formData, setFormData] = useState({
     email: "",
     fullName: "",
-    role: "normal", // Por defecto normal
-    storeId: "", // Para usuarios normales
-    assignedStores: [], // Para managers
+    role: "normal",
+    storeId: "",
+    assignedStores: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tempPassword, setTempPassword] = useState(null);
   const [stores, setStores] = useState([]);
+  const [isAuthorized, setIsAuthorized] = useState(null); // null = checking, false = unauthorized, true = authorized
 
-  // Cargar tiendas al iniciar
-  useState(() => {
+  // Check authorization (manager or superadmin)
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const supabase = getSupabaseBrowser();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setError("Debes iniciar sesión para crear usuarios.");
+          setIsAuthorized(false);
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profile?.role === "manager" || profile?.role === "superadmin") {
+          setIsAuthorized(true);
+        } else {
+          setError("No tienes permiso para crear usuarios.");
+          setIsAuthorized(false);
+        }
+      } catch (error) {
+        console.error("Error checking auth:", error);
+        setError("Error al verificar permisos.");
+        setIsAuthorized(false);
+      }
+    };
+    checkAuth();
+  }, []);
+
+  // Fetch stores
+  useEffect(() => {
+    if (!isAuthorized) return;
+
     const fetchStores = async () => {
       try {
         const supabase = getSupabaseBrowser();
-        const { data } = await supabase.from("stores").select("*").order("name");
+        const { data } = await supabase
+          .from("stores")
+          .select("id,name")
+          .order("name");
         setStores(data || []);
       } catch (error) {
         console.error("Error fetching stores:", error);
+        setError("Error al cargar las tiendas.");
       }
     };
     fetchStores();
-  }, []);
+  }, [isAuthorized]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -83,6 +122,37 @@ export default function CreateUserPage() {
     }
   };
 
+  if (isAuthorized === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4">
+        <div className="animate-pulse h-10 bg-gray-200 rounded w-64"></div>
+      </div>
+    );
+  }
+
+  if (isAuthorized === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4">
+        <div className="max-w-md w-full space-y-8">
+          <h2 className="text-2xl font-bold text-gray-900 text-center">Acceso denegado</h2>
+          {error && (
+            <div className="rounded-md bg-red-50 p-4">
+              <div className="text-sm text-red-700">{error}</div>
+            </div>
+          )}
+          <div className="text-center">
+            <Link
+              href="/auth/login"
+              className="font-medium text-blue-600 hover:text-blue-500"
+            >
+              Volver al inicio de sesión
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (tempPassword) {
     return (
       <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
@@ -96,7 +166,10 @@ export default function CreateUserPage() {
             </div>
             <div className="mt-4 bg-gray-100 p-3 rounded-md font-mono text-center">{tempPassword}</div>
             <div className="mt-8 flex justify-center space-x-4">
-              <Link href="/admin/usuarios" className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+              <Link
+                href="/admin/usuarios"
+                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
                 Volver a usuarios
               </Link>
               <button
@@ -217,7 +290,7 @@ export default function CreateUserPage() {
             <div>
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !isAuthorized}
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 {loading ? "Creando usuario..." : "Crear usuario"}
