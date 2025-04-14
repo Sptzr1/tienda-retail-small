@@ -14,6 +14,29 @@ export default function PosLayout({ categories, products, store, user }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [filteredProducts, setFilteredProducts] = useState(products);
   const [cart, setCart] = useState([]);
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [rateError, setRateError] = useState(null);
+
+  // Fetch exchange rate
+  useEffect(() => {
+    const fetchRate = async () => {
+      const supabase = getSupabaseBrowser();
+      const { data, error } = await supabase
+        .from("exchange_rates")
+        .select("rate")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (error || !data || data.length === 0) {
+        console.error("Error fetching exchange rate:", { error, data });
+        setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
+      } else {
+        const rate = parseFloat(data[0].rate);
+        setExchangeRate(isNaN(rate) ? null : rate);
+      }
+    };
+    fetchRate();
+  }, []);
 
   // Filter products when category changes
   useEffect(() => {
@@ -113,7 +136,12 @@ export default function PosLayout({ categories, products, store, user }) {
           />
 
           <div className="flex-1 overflow-auto p-4">
-            <ProductGrid products={filteredProducts} addToCart={addToCart} />
+            <ProductGrid
+              products={filteredProducts}
+              addToCart={addToCart}
+              exchangeRate={exchangeRate}
+              rateError={rateError}
+            />
           </div>
         </div>
 
@@ -126,11 +154,12 @@ export default function PosLayout({ categories, products, store, user }) {
             clearCart={clearCart}
             storeId={store.id}
             storeName={store.name}
-            profile={user} // Pasamos user como profile a Cart
+            profile={user}
+            exchangeRate={exchangeRate}
+            rateError={rateError}
           />
         </div>
       </div>
     </div>
   );
 }
-

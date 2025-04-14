@@ -5,83 +5,32 @@ import { Minus, Plus, Trash2, Printer } from "lucide-react";
 import { getSupabaseBrowser } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-export default function Cart({ items, updateQuantity, removeItem, clearCart, storeId, storeName, profile: profileProp }) {
+export default function Cart({
+  items,
+  updateQuantity,
+  removeItem,
+  clearCart,
+  storeId,
+  storeName,
+  profile,
+  exchangeRate,
+  rateError,
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [completedOrder, setCompletedOrder] = useState(null);
-  const [profile, setProfile] = useState(null);
   const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
-  const [exchangeRate, setExchangeRate] = useState(null);
-  const [rateError, setRateError] = useState(null);
 
-  // Obtener el perfil del usuario autenticado y tasa de cambio
+  // Set store ID and fetch stores for superadmin/manager
   useEffect(() => {
-    const fetchProfileAndRate = async () => {
-      const supabase = getSupabaseBrowser();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error("Error fetching user:", userError);
-        return;
-      }
+    if (!profile) return;
 
-      const [{ data: profileData, error: profileError }, { data: rateData, error: rateError }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, role, store_id")
-          .eq("id", user.id)
-          .single(),
-        supabase
-          .from("exchange_rates")
-          .select("rate")
-          .order("created_at", { ascending: false })
-          .limit(1),
-      ]);
+    setDynamicStoreId(profile.role === "normal" ? storeId : "");
 
-      if (profileError) {
-        console.error("Error fetching profile:", profileError);
-      } else {
-        setProfile(profileData);
-        setDynamicStoreId(profileData.role === "normal" ? storeId : "");
-      }
-
-      if (rateError || !rateData || rateData.length === 0) {
-        console.error("Error fetching exchange rate:", { rateError, rateData });
-        setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
-      } else {
-        const rate = parseFloat(rateData[0].rate);
-        setExchangeRate(isNaN(rate) ? null : rate);
-      }
-    };
-
-    if (profileProp) {
-      setProfile(profileProp);
-      setDynamicStoreId(profileProp.role === "normal" ? storeId : "");
-      const supabase = getSupabaseBrowser();
-      supabase
-        .from("exchange_rates")
-        .select("rate")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .then(({ data, error }) => {
-          if (error || !data || data.length === 0) {
-            console.error("Error fetching exchange rate:", { error, data });
-            setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
-          } else {
-            const rate = parseFloat(data[0].rate);
-            setExchangeRate(isNaN(rate) ? null : rate);
-          }
-        });
-    } else {
-      fetchProfileAndRate();
-    }
-  }, [profileProp, storeId]);
-
-  // Cargar las tiendas disponibles para superadmin/manager
-  useEffect(() => {
-    if (!profile || (profile.role !== "superadmin" && profile.role !== "manager")) return;
+    if (profile.role !== "superadmin" && profile.role !== "manager") return;
 
     const fetchStores = async () => {
       const supabase = getSupabaseBrowser();
@@ -109,7 +58,7 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
       }
     };
     fetchStores();
-  }, [profile]);
+  }, [profile, storeId]);
 
   // Calcular subtotal, IVA y total con IVA incluido
   const taxRate = 0.16;

@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Search } from "lucide-react"
+import { useState } from "react";
+import { Search } from "lucide-react";
 
-export default function ProductGrid({ products, addToCart }) {
-  const [searchTerm, setSearchTerm] = useState("")
+export default function ProductGrid({ products, addToCart, exchangeRate, rateError }) {
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Filter products based on search term
   const filteredProducts = searchTerm
@@ -13,15 +13,22 @@ export default function ProductGrid({ products, addToCart }) {
           product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           product.description.toLowerCase().includes(searchTerm.toLowerCase()),
       )
-    : products
+    : products;
 
   // Format currency
-  const formatCurrency = (amount) => {
+  const formatCurrency = (amount, currency = "USD") => {
+    if (currency === "VES") {
+      return new Intl.NumberFormat("es-VE", {
+        style: "currency",
+        currency: "VES",
+        minimumFractionDigits: 2,
+      }).format(amount);
+    }
     return new Intl.NumberFormat("es-MX", {
       style: "currency",
-      currency: "MXN",
-    }).format(amount)
-  }
+      currency: "USD",
+    }).format(amount);
+  };
 
   return (
     <div>
@@ -39,6 +46,10 @@ export default function ProductGrid({ products, addToCart }) {
           />
         </div>
       </div>
+
+      {rateError && (
+        <p className="text-red-600 text-sm mb-4">{rateError}</p>
+      )}
 
       {filteredProducts.length === 0 ? (
         <div className="text-center py-12">
@@ -70,7 +81,14 @@ export default function ProductGrid({ products, addToCart }) {
                 <p className="mt-1 text-xs text-gray-500 line-clamp-2">{product.description}</p>
 
                 <div className="mt-2 flex justify-between items-center">
-                  <p className="text-sm font-medium text-gray-900">{formatCurrency(product.price)}</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {formatCurrency(product.price)}
+                    {exchangeRate ? (
+                      <span> / {formatCurrency(product.price * exchangeRate, "VES")}</span>
+                    ) : (
+                      <span> / Bs.D no disponible</span>
+                    )}
+                  </p>
                   <p
                     className={`text-xs ${
                       product.stock > 10 ? "text-green-600" : product.stock > 0 ? "text-yellow-600" : "text-red-600"
@@ -93,6 +111,5 @@ export default function ProductGrid({ products, addToCart }) {
         </div>
       )}
     </div>
-  )
+  );
 }
-
