@@ -14,10 +14,12 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
   const [profile, setProfile] = useState(null);
   const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [rateError, setRateError] = useState(null);
 
-  // Obtener el perfil del usuario autenticado
+  // Obtener el perfil del usuario autenticado y tasa de cambio
   useEffect(() => {
-    const fetchProfile = async () => {
+    const fetchProfileAndRate = async () => {
       const supabase = getSupabaseBrowser();
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
@@ -25,29 +27,59 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
         return;
       }
 
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, role, store_id")
-        .eq("id", user.id)
-        .single();
+      const [{ data: profileData, error: profileError }, { data: rateData, error: rateError }] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, role, store_id")
+          .eq("id", user.id)
+          .single(),
+        supabase
+          .from("exchange_rates")
+          .select("rate")
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
 
-      if (error) {
-        console.error("Error fetching profile:", error);
+      if (profileError) {
+        console.error("Error fetching profile:", profileError);
       } else {
-        setProfile(data);
-        setDynamicStoreId(data.role === "normal" ? storeId : "");
+        setProfile(profileData);
+        setDynamicStoreId(profileData.role === "normal" ? storeId : "");
+      }
+
+      if (rateError || !rateData || rateData.length === 0) {
+        console.error("Error fetching exchange rate:", { rateError, rateData });
+        setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
+      } else {
+        const rate = parseFloat(rateData[0].rate);
+        setExchangeRate(isNaN(rate) ? null : rate);
       }
     };
 
     if (profileProp) {
       setProfile(profileProp);
       setDynamicStoreId(profileProp.role === "normal" ? storeId : "");
+      const supabase = getSupabaseBrowser();
+      supabase
+        .from("exchange_rates")
+        .select("rate")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .then(({ data, error }) => {
+          if (error || !data || data.length === 0) {
+            console.error("Error fetching exchange rate:", { error, data });
+            setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
+          } else {
+            const rate = parseFloat(data[0].rate);
+            setExchangeRate(isNaN(rate) ? null : rate);
+          }
+        });
     } else {
-      fetchProfile();
+      fetchProfileAndRate();
     }
   }, [profileProp, storeId]);
 
-  // Cargar las tiendas disponibles según el rol del usuario
+  // Cargar las tiendas disponibles para superadmin/manager
   useEffect(() => {
     if (!profile || (profile.role !== "superadmin" && profile.role !== "manager")) return;
 
@@ -79,33 +111,64 @@ export default function Cart({ items, updateQuantity, removeItem, clearCart, sto
     fetchStores();
   }, [profile]);
 
-  // Calcular subtotal, IVA y total
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  // Calcular subtotal, IVA y total con IVA incluido
   const taxRate = 0.16;
-  const tax = subtotal * taxRate;
-  const total = subtotal + tax;
+  const itemsWithCalculations = items.map((item) => {
+    const total_usd = item.price * item.quantity;
+    const subtotal_usd = total_usd / (1 + taxRate);
+    const tax_usd = total_usd - subtotal_usd;
+    return {
+      ...item,
+      total_usd,
+      subtotal_usd,
+      tax_usd,
+      total_bsd: exchangeRate ? total_usd * exchangeRate : null,
+      subtotal_bsd: exchangeRate ? subtotal_usd * exchangeRate : null,
+      tax_bsd: exchangeRate ? tax_usd * exchangeRate : null,
+    };
+  });
 
-  // Función para imprimir el ticket enviando datos al endpoint
-const printTicket = async (order) => {
-  try {
-    const response = await fetch("/api/print-ticket", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(order),
-    });
+  const subtotal_usd = itemsWithCalculations.reduce((sum, item) => sum + item.subtotal_usd, 0);
+  const tax_usd = itemsWithCalculations.reduce((sum, item) => sum + item.tax_usd, 0);
+  const total_usd = itemsWithCalculations.reduce((sum, item) => sum + item.total_usd, 0);
 
-    const data = await response.json(); // Parsear la respuesta como JSON
+  const subtotal_bsd = exchangeRate ? subtotal_usd * exchangeRate : null;
+  const tax_bsd = exchangeRate ? tax_usd * exchangeRate : null;
+  const total_bsd = exchangeRate ? total_usd * exchangeRate : null;
 
-    if (!response.ok) {
-      throw new Error(data.error || "Error en la impresión");
+  // Función para imprimir el ticket
+  const printTicket = async (order) => {
+    try {
+      const response = await fetch("/api/print-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: order.id,
+          created_at: order.created_at,
+          store: order.store,
+          items: order.items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            price_bsd: item.price * exchangeRate,
+            total_bsd: item.total_bsd,
+          })),
+          subtotal_bsd,
+          tax_bsd,
+          total_bsd,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Error en la impresión");
+      }
+      console.log("Ticket printed successfully:", data);
+    } catch (error) {
+      console.error("Error printing ticket:", error);
+      alert("Error al imprimir el ticket: " + error.message);
     }
-
-    console.log("Ticket printed successfully:", data);
-  } catch (error) {
-    console.error("Error printing ticket:", error);
-    alert("Error al imprimir el ticket: " + error.message);
-  }
-};
+  };
 
   const handleCheckout = async () => {
     if (items.length === 0) return;
@@ -124,6 +187,11 @@ const printTicket = async (order) => {
       return;
     }
 
+    if (!exchangeRate) {
+      alert("Error: Tasa de cambio no disponible. Por favor, contacta al administrador.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -131,8 +199,8 @@ const printTicket = async (order) => {
 
       const saleData = {
         store_id: Number(finalStoreId),
-        total_amount: total,
-        tax_amount: tax,
+        total_amount: total_usd,
+        tax_amount: tax_usd,
         status: "completed",
         items_count: items.reduce((sum, item) => sum + item.quantity, 0),
         created_by: profile.id,
@@ -152,7 +220,7 @@ const printTicket = async (order) => {
         product_id: item.id,
         quantity: item.quantity,
         price: item.price,
-        subtotal: item.price * item.quantity,
+        subtotal: (item.price * item.quantity) / (1 + taxRate),
       }));
       console.log("Data sent to Supabase (sale_items):", saleItems);
 
@@ -171,13 +239,13 @@ const printTicket = async (order) => {
 
       const order = {
         ...sale,
-        items: items.map((item) => ({
-          ...item,
-          total: item.price * item.quantity,
-        })),
-        subtotal,
-        tax,
-        total,
+        items: itemsWithCalculations,
+        subtotal_usd,
+        tax_usd,
+        total_usd,
+        subtotal_bsd,
+        tax_bsd,
+        total_bsd,
         store: {
           id: finalStoreId,
           name: profile.role === "normal" ? storeName : stores.find((s) => s.id === Number(finalStoreId))?.name || "Unknown",
@@ -189,7 +257,6 @@ const printTicket = async (order) => {
       clearCart();
       router.refresh();
 
-      // Imprimir automáticamente después de completar la venta
       await printTicket(order);
     } catch (error) {
       console.error("Error processing checkout:", error);
@@ -200,8 +267,7 @@ const printTicket = async (order) => {
   };
 
   const handlePrint = () => {
-    if (!completedOrder) return;
-    // Reutilizar la misma función de impresión para el botón del modal
+    if (!completedOrder || !exchangeRate) return;
     printTicket(completedOrder);
   };
 
@@ -215,14 +281,21 @@ const printTicket = async (order) => {
     setShowPrintModal(false);
   };
 
-  const formatCurrency = (amount) => {
+  const formatCurrency = (amount, currency = "USD") => {
+    if (currency === "VES") {
+      return new Intl.NumberFormat("es-VE", {
+        style: "currency",
+        currency: "VES",
+        minimumFractionDigits: 2,
+      }).format(amount);
+    }
     return new Intl.NumberFormat("es-MX", {
       style: "currency",
       currency: "USD",
     }).format(amount);
   };
 
-  if (showReceipt && completedOrder) {
+  if (showReceipt && completedOrder && exchangeRate) {
     return (
       <div className="flex flex-col h-full">
         <div className="p-4 border-b flex justify-between items-center">
@@ -260,7 +333,7 @@ const printTicket = async (order) => {
                     <tr className="border-b">
                       <th className="text-left py-1">Producto</th>
                       <th className="text-center py-1">Cant.</th>
-                      <th className="text-right py-1">Total</th>
+                      <th className="text-right py-1">Total (Bs.D)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -268,7 +341,7 @@ const printTicket = async (order) => {
                       <tr key={item.id} className="border-b border-gray-100">
                         <td className="py-1">{item.quantity} x {item.name}</td>
                         <td className="text-center py-1">{item.quantity}</td>
-                        <td className="text-right py-1">{formatCurrency(item.total)}</td>
+                        <td className="text-right py-1">{formatCurrency(item.total_bsd, "VES")}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -278,15 +351,15 @@ const printTicket = async (order) => {
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span>{formatCurrency(completedOrder.subtotal)}</span>
+                  <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>IVA (16%):</span>
-                  <span>{formatCurrency(completedOrder.tax)}</span>
+                  <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
                 </div>
                 <div className="flex justify-between font-bold text-base">
                   <span>Total:</span>
-                  <span>{formatCurrency(completedOrder.total)}</span>
+                  <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
                 </div>
               </div>
 
@@ -327,8 +400,7 @@ const printTicket = async (order) => {
                   <tr className="border-b">
                     <th className="text-left py-2">Producto</th>
                     <th className="text-center py-2">Cant.</th>
-                    <th className="text-right py-2">Precio</th>
-                    <th className="text-right py-2">Total</th>
+                    <th className="text-right py-2">Total (Bs.D)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -336,8 +408,7 @@ const printTicket = async (order) => {
                     <tr key={item.id} className="border-b border-gray-100">
                       <td className="py-2">{item.name}</td>
                       <td className="text-center py-2">{item.quantity}</td>
-                      <td className="text-right py-2">{formatCurrency(item.price)}</td>
-                      <td className="text-right py-2">{formatCurrency(item.total)}</td>
+                      <td className="text-right py-2">{formatCurrency(item.total_bsd, "VES")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -347,15 +418,15 @@ const printTicket = async (order) => {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span>{formatCurrency(completedOrder.subtotal)}</span>
+                <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
               </div>
               <div className="flex justify-between">
                 <span>IVA (16%):</span>
-                <span>{formatCurrency(completedOrder.tax)}</span>
+                <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
               </div>
               <div className="flex justify-between font-bold text-base">
                 <span>Total:</span>
-                <span>{formatCurrency(completedOrder.total)}</span>
+                <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
               </div>
             </div>
 
@@ -404,6 +475,11 @@ const printTicket = async (order) => {
                 <div className="flex-1">
                   <h3 className="font-medium">{item.name}</h3>
                   <p className="text-gray-500 text-sm">{formatCurrency(item.price)}</p>
+                  {exchangeRate ? (
+                    <p className="text-gray-500 text-sm">{formatCurrency(item.price * exchangeRate, "VES")}</p>
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">Tasa de cambio no disponible</p>
+                  )}
                 </div>
 
                 <div className="flex items-center space-x-2">
@@ -438,24 +514,45 @@ const printTicket = async (order) => {
       </div>
 
       <div className="border-t p-4 bg-gray-50">
+        {rateError && (
+          <p className="text-red-600 text-sm mb-2">{rateError}</p>
+        )}
         <div className="space-y-2 mb-4">
           <div className="flex justify-between">
             <span>Subtotal:</span>
-            <span>{formatCurrency(subtotal)}</span>
+            <span>{formatCurrency(subtotal_usd)}</span>
           </div>
+          {exchangeRate && (
+            <div className="flex justify-between">
+              <span>Subtotal (Bs.D):</span>
+              <span>{formatCurrency(subtotal_bsd, "VES")}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span>IVA (16%):</span>
-            <span>{formatCurrency(tax)}</span>
+            <span>{formatCurrency(tax_usd)}</span>
           </div>
+          {exchangeRate && (
+            <div className="flex justify-between">
+              <span>IVA (Bs.D):</span>
+              <span>{formatCurrency(tax_bsd, "VES")}</span>
+            </div>
+          )}
           <div className="flex justify-between font-bold">
             <span>Total:</span>
-            <span>{formatCurrency(total)}</span>
+            <span>{formatCurrency(total_usd)}</span>
           </div>
+          {exchangeRate && (
+            <div className="flex justify-between font-bold">
+              <span>Total (Bs.D):</span>
+              <span>{formatCurrency(total_bsd, "VES")}</span>
+            </div>
+          )}
         </div>
 
         <button
           onClick={handleCheckout}
-          disabled={items.length === 0 || loading}
+          disabled={items.length === 0 || loading || !exchangeRate}
           className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Procesando..." : "Completar venta"}

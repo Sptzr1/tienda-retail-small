@@ -1,58 +1,78 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function UserManagement({ users, stores }) {
-  const router = useRouter()
-  const [loading, setLoading] = useState(false)
-  const [selectedUser, setSelectedUser] = useState(null)
-  const [tempPassword, setTempPassword] = useState(null)
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [tempPassword, setTempPassword] = useState(null);
 
   const handleUpdateUser = async (userId, updates) => {
-    setLoading(true)
+    setLoading(true);
 
     try {
-      const supabase = getSupabaseBrowser()
+      const supabase = getSupabaseBrowser();
 
-      const { error } = await supabase.from("profiles").update(updates).eq("id", userId)
+      // Update profiles
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          role: updates.role,
+          store_id: updates.store_id,
+          force_password_change: updates.force_password_change,
+        })
+        .eq("id", userId);
 
-      if (error) throw error
+      if (profileError) throw profileError;
 
-      router.refresh()
+      // Update manager_stores for manager role
+      if (updates.role === "manager" && updates.manager_stores?.length > 0) {
+        // Delete existing manager_stores
+        await supabase.from("manager_stores").delete().eq("user_id", userId);
+
+        // Insert new manager_stores
+        const managerStoresData = updates.manager_stores.map((storeId) => ({
+          user_id: userId,
+          store_id: Number.parseInt(storeId),
+        }));
+        const { error: storesError } = await supabase.from("manager_stores").insert(managerStoresData);
+        if (storesError) throw storesError;
+      } else if (updates.role !== "manager") {
+        // Clear manager_stores for non-managers
+        await supabase.from("manager_stores").delete().eq("user_id", userId);
+      }
+
+      router.refresh();
     } catch (error) {
-      console.error("Error updating user:", error)
-      alert("Error al actualizar el usuario")
+      console.error("Error updating user:", error);
+      alert("Error al actualizar el usuario: " + error.message);
     } finally {
-      setLoading(false)
-      setSelectedUser(null)
+      setLoading(false);
+      setSelectedUser(null);
     }
-  }
+  };
 
   const handleResetPassword = async (userId) => {
-    setLoading(true)
-    setTempPassword(null)
+    setLoading(true);
+    setTempPassword(null);
 
     try {
-      const supabase = getSupabaseBrowser()
+      const supabase = getSupabaseBrowser();
+      const { data, error } = await supabase.rpc("admin_create_temp_password", { user_id_param: userId });
 
-      // Llamar a la función RPC para crear una contraseña temporal
-      const { data, error } = await supabase.rpc("admin_create_temp_password", { user_id_param: userId })
-
-      if (error) throw error
-
-      // Mostrar la contraseña temporal
-      setTempPassword(data)
-
-      router.refresh()
+      if (error) throw error;
+      setTempPassword(data);
+      router.refresh();
     } catch (error) {
-      console.error("Error resetting password:", error)
-      alert("Error al restablecer la contraseña")
+      console.error("Error resetting password:", error);
+      alert("Error al restablecer la contraseña: " + error.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="flex flex-col">
@@ -78,7 +98,7 @@ export default function UserManagement({ users, stores }) {
                     scope="col"
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                   >
-                    Tienda
+                    Tienda(s)
                   </th>
                   <th
                     scope="col"
@@ -117,14 +137,22 @@ export default function UserManagement({ users, stores }) {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
                           className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            user.is_admin ? "bg-purple-100 text-purple-800" : "bg-green-100 text-green-800"
+                            user.role === "superadmin"
+                              ? "bg-purple-100 text-purple-800"
+                              : user.role === "manager"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-green-100 text-green-800"
                           }`}
                         >
-                          {user.is_admin ? "Administrador" : "Usuario"}
+                          {user.role === "superadmin" ? "Superadmin" : user.role === "manager" ? "Manager" : "Normal"}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {user.stores?.name || "Sin asignar"}
+                        {user.role === "normal" && user.store
+                          ? user.store.name
+                          : user.role === "manager" && user.stores?.length > 0
+                          ? user.stores.map((s) => s.name).join(", ")
+                          : "Sin asignar"}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {user.last_login ? new Date(user.last_login).toLocaleString() : "Nunca"}
@@ -164,39 +192,72 @@ export default function UserManagement({ users, stores }) {
                   <label className="block text-sm font-medium text-gray-700">Rol</label>
                   <select
                     className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                    defaultValue={selectedUser.is_admin ? "admin" : "user"}
+                    value={selectedUser.role || "normal"}
                     onChange={(e) => {
                       setSelectedUser({
                         ...selectedUser,
-                        is_admin: e.target.value === "admin",
-                      })
+                        role: e.target.value,
+                        store_id: e.target.value !== "normal" ? null : selectedUser.store_id,
+                        manager_stores:
+                          e.target.value === "manager" ? selectedUser.manager_stores || [] : [],
+                      });
                     }}
                   >
-                    <option value="user">Usuario</option>
-                    <option value="admin">Administrador</option>
+                    <option value="normal">Normal</option>
+                    <option value="manager">Manager</option>
+                    <option value="superadmin">Superadmin</option>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Tienda asignada</label>
-                  <select
-                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                    defaultValue={selectedUser.store_id || ""}
-                    onChange={(e) => {
-                      setSelectedUser({
-                        ...selectedUser,
-                        store_id: e.target.value ? Number.parseInt(e.target.value) : null,
-                      })
-                    }}
-                  >
-                    <option value="">Sin asignar</option>
-                    {stores.map((store) => (
-                      <option key={store.id} value={store.id}>
-                        {store.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {selectedUser.role === "normal" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Tienda asignada</label>
+                    <select
+                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                      value={selectedUser.store_id || ""}
+                      onChange={(e) => {
+                        setSelectedUser({
+                          ...selectedUser,
+                          store_id: e.target.value ? Number.parseInt(e.target.value) : null,
+                        });
+                      }}
+                    >
+                      <option value="">Sin asignar</option>
+                      {stores.map((store) => (
+                        <option key={store.id} value={store.id}>
+                          {store.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {selectedUser.role === "manager" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Tiendas asignadas</label>
+                    <div className="mt-1 space-y-2">
+                      {stores.map((store) => (
+                        <div key={store.id} className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedUser.manager_stores?.includes(store.id.toString()) || false}
+                            onChange={(e) => {
+                              const newStores = e.target.checked
+                                ? [...(selectedUser.manager_stores || []), store.id.toString()]
+                                : (selectedUser.manager_stores || []).filter((id) => id !== store.id.toString());
+                              setSelectedUser({
+                                ...selectedUser,
+                                manager_stores: newStores,
+                              });
+                            }}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">{store.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Forzar cambio de contraseña</label>
@@ -208,7 +269,7 @@ export default function UserManagement({ users, stores }) {
                         setSelectedUser({
                           ...selectedUser,
                           force_password_change: e.target.checked,
-                        })
+                        });
                       }}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
@@ -231,8 +292,9 @@ export default function UserManagement({ users, stores }) {
                   type="button"
                   onClick={() =>
                     handleUpdateUser(selectedUser.id, {
-                      is_admin: selectedUser.is_admin,
+                      role: selectedUser.role,
                       store_id: selectedUser.store_id,
+                      manager_stores: selectedUser.manager_stores,
                       force_password_change: selectedUser.force_password_change,
                     })
                   }
@@ -277,6 +339,6 @@ export default function UserManagement({ users, stores }) {
         </div>
       )}
     </div>
-  )
+  );
 }
 

@@ -1,36 +1,76 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Trash2 } from "lucide-react"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function ProductList({ products }) {
-  const router = useRouter()
-  const [deleting, setDeleting] = useState(null)
+  const router = useRouter();
+  const [deleting, setDeleting] = useState(null);
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [rateError, setRateError] = useState(null);
+
+  // Fetch exchange rate
+  useEffect(() => {
+    const fetchRate = async () => {
+      const supabase = getSupabaseBrowser();
+      const { data, error } = await supabase
+        .from("exchange_rates")
+        .select("rate")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (error || !data || data.length === 0) {
+        console.error("Error fetching exchange rate:", { error, data });
+        setRateError("No se pudo cargar la tasa de cambio.");
+      } else {
+        const rate = parseFloat(data[0].rate);
+        setExchangeRate(isNaN(rate) ? null : rate);
+      }
+    };
+    fetchRate();
+  }, []);
 
   const handleDelete = async (id) => {
-    if (!confirm("¿Estás seguro de eliminar este producto?")) return
+    if (!confirm("¿Estás seguro de eliminar este producto?")) return;
 
-    setDeleting(id)
+    setDeleting(id);
 
     try {
-      const supabase = getSupabaseBrowser()
-      const { error } = await supabase.from("products").delete().eq("id", id)
+      const supabase = getSupabaseBrowser();
+      const { error } = await supabase.from("products").delete().eq("id", id);
 
-      if (error) throw error
+      if (error) throw error;
 
-      router.refresh()
+      router.refresh();
     } catch (error) {
-      console.error("Error deleting product:", error)
-      alert("Error al eliminar el producto")
+      console.error("Error deleting product:", error);
+      alert("Error al eliminar el producto");
     } finally {
-      setDeleting(null)
+      setDeleting(null);
     }
-  }
+  };
+
+  const formatCurrency = (amount, currency = "USD") => {
+    if (currency === "VES") {
+      return new Intl.NumberFormat("es-VE", {
+        style: "currency",
+        currency: "VES",
+        minimumFractionDigits: 2,
+      }).format(amount);
+    }
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: "USD",
+    }).format(amount);
+  };
 
   return (
     <div className="mt-4 flex flex-col">
+      {rateError && (
+        <p className="text-red-600 text-sm mb-2">{rateError}</p>
+      )}
       <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
         <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
           <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
@@ -53,7 +93,7 @@ export default function ProductList({ products }) {
                     scope="col"
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                   >
-                    Precio
+                    Precio (USD/Bs.D)
                   </th>
                   <th
                     scope="col"
@@ -103,10 +143,17 @@ export default function ProductList({ products }) {
                         <div className="text-sm text-gray-900">{product.categories?.name || "Sin categoría"}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">${product.price.toFixed(2)}</div>
+                        <div className="text-sm text-gray-900">
+                          {formatCurrency(product.price)}
+                          {exchangeRate ? (
+                            <span> / {formatCurrency(product.price * exchangeRate, "VES")}</span>
+                          ) : (
+                            <span> / Bs.D no disponible</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">${product.cost.toFixed(2)}</div>
+                        <div className="text-sm text-gray-900">{formatCurrency(product.cost)}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{product.stock}</div>
@@ -129,6 +176,6 @@ export default function ProductList({ products }) {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
