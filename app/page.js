@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Store, BarChart3, ShoppingCart } from "lucide-react";
 import UserButton from "@/components/auth/user-button";
+import StoreList from "@/components/store/store-list";
 import { cookies } from "next/headers";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 
@@ -29,11 +30,9 @@ export default async function Home() {
 
     // Determinar las tiendas según el rol
     if (profile?.role === "superadmin") {
-      // Superadmin: todas las tiendas
       const { data: storesData } = await supabase.from("stores").select("*").order("name");
       stores = storesData || [];
     } else if (profile?.role === "manager") {
-      // Manager: tiendas asignadas en manager_stores
       const { data: assignedStoresData } = await supabase
         .from("manager_stores")
         .select("store_id")
@@ -49,7 +48,6 @@ export default async function Home() {
         stores = storesData || [];
       }
     } else if (profile?.role === "normal" && profile?.store_id) {
-      // Normal: solo la tienda asignada en store_id
       const { data: storeData } = await supabase
         .from("stores")
         .select("*")
@@ -106,59 +104,41 @@ export default async function Home() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {stores.map((store) => (
+              <StoreList stores={stores} role={profile?.role} />
+
+              {(profile?.role === "superadmin" || profile?.role === "manager") && (
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mt-6">
                   <Link
-                    key={store.id}
-                    href={`/pos?store=${store.id}`}
+                    href="/admin/productos"
                     className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
                   >
                     <div className="flex items-center">
-                      <div className="p-3 rounded-full bg-blue-100 text-blue-600">
-                        <ShoppingCart className="h-8 w-8" />
+                      <div className="p-3 rounded-full bg-green-100 text-green-600">
+                        <Store className="h-8 w-8" />
                       </div>
                       <div className="ml-4">
-                        <h2 className="text-xl font-semibold">{store.name}</h2>
-                        <p className="mt-1 text-gray-600">Punto de Venta</p>
+                        <h2 className="text-xl font-semibold">Inventario</h2>
+                        <p className="mt-1 text-gray-600">Administrar productos y categorías</p>
                       </div>
                     </div>
                   </Link>
-                ))}
 
-                {(profile?.role === "superadmin" || profile?.role === "manager") && (
-                  <>
-                    <Link
-                      href="/admin/productos"
-                      className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
-                    >
-                      <div className="flex items-center">
-                        <div className="p-3 rounded-full bg-green-100 text-green-600">
-                          <Store className="h-8 w-8" />
-                        </div>
-                        <div className="ml-4">
-                          <h2 className="text-xl font-semibold">Inventario</h2>
-                          <p className="mt-1 text-gray-600">Administrar productos y categorías</p>
-                        </div>
+                  <Link
+                    href="/admin/reportes"
+                    className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                  >
+                    <div className="flex items-center">
+                      <div className="p-3 rounded-full bg-purple-100 text-purple-600">
+                        <BarChart3 className="h-8 w-8" />
                       </div>
-                    </Link>
-
-                    <Link
-                      href="/admin/reportes"
-                      className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
-                    >
-                      <div className="flex items-center">
-                        <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-                          <BarChart3 className="h-8 w-8" />
-                        </div>
-                        <div className="ml-4">
-                          <h2 className="text-xl font-semibold">Reportes</h2>
-                          <p className="mt-1 text-gray-600">Visualiza informes de ventas, inventario y rendimiento.</p>
-                        </div>
+                      <div className="ml-4">
+                        <h2 className="text-xl font-semibold">Reportes</h2>
+                        <p className="mt-1 text-gray-600">Visualiza informes de ventas, inventario y rendimiento.</p>
                       </div>
-                    </Link>
-                  </>
-                )}
-              </div>
+                    </div>
+                  </Link>
+                </div>
+              )}
             </>
           )}
         </div>

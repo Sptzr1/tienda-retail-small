@@ -9,13 +9,14 @@ import { Home, LogOut } from "lucide-react";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function PosLayout({ categories, products, store, user }) {
+export default function PosLayout({ categories, products, store: initialStore, user }) {
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [filteredProducts, setFilteredProducts] = useState(products);
   const [cart, setCart] = useState([]);
   const [exchangeRate, setExchangeRate] = useState(null);
   const [rateError, setRateError] = useState(null);
+  const [store, setStore] = useState(initialStore);
 
   // Fetch exchange rate
   useEffect(() => {
@@ -38,6 +39,42 @@ export default function PosLayout({ categories, products, store, user }) {
     fetchRate();
   }, []);
 
+  // Fetch store dynamically
+  useEffect(() => {
+    const fetchStore = async () => {
+      const supabase = getSupabaseBrowser();
+      const storeId = initialStore.id;
+      const { data, error } = await supabase
+        .from("stores")
+        .select("id, name")
+        .eq("id", storeId)
+        .single();
+
+      if (error || !data) {
+        console.error("Error fetching store:", error);
+      } else {
+        setStore(data);
+      }
+    };
+
+    fetchStore();
+
+    // Subscribe to store updates
+    const supabase = getSupabaseBrowser();
+    const channel = supabase
+      .channel("stores")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "stores", filter: `id=eq.${initialStore.id}` },
+        (payload) => {
+          setStore(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [initialStore.id]);
+
   // Filter products when category changes
   useEffect(() => {
     if (selectedCategory) {
@@ -50,16 +87,13 @@ export default function PosLayout({ categories, products, store, user }) {
   // Add product to cart
   const addToCart = (product) => {
     setCart((prevCart) => {
-      // Check if product is already in cart
       const existingItem = prevCart.find((item) => item.id === product.id);
 
       if (existingItem) {
-        // Increase quantity if already in cart
         return prevCart.map((item) =>
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
       } else {
-        // Add new item to cart
         return [...prevCart, { ...product, quantity: 1 }];
       }
     });
@@ -69,11 +103,9 @@ export default function PosLayout({ categories, products, store, user }) {
   const updateQuantity = (productId, quantity) => {
     setCart((prevCart) => {
       if (quantity <= 0) {
-        // Remove item if quantity is 0 or less
         return prevCart.filter((item) => item.id !== productId);
       }
 
-      // Update quantity
       return prevCart.map((item) => (item.id === productId ? { ...item, quantity } : item));
     });
   };
@@ -127,7 +159,6 @@ export default function PosLayout({ categories, products, store, user }) {
       </header>
 
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Product selection area */}
         <div className="w-full md:w-2/3 flex flex-col overflow-hidden">
           <CategoryTabs
             categories={categories}
@@ -145,7 +176,6 @@ export default function PosLayout({ categories, products, store, user }) {
           </div>
         </div>
 
-        {/* Cart area */}
         <div className="w-full md:w-1/3 bg-white border-t md:border-t-0 md:border-l">
           <Cart
             items={cart}
@@ -153,7 +183,6 @@ export default function PosLayout({ categories, products, store, user }) {
             removeItem={removeItem}
             clearCart={clearCart}
             storeId={store.id}
-            storeName={store.name}
             profile={user}
             exchangeRate={exchangeRate}
             rateError={rateError}

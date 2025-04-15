@@ -11,7 +11,6 @@ export default function Cart({
   removeItem,
   clearCart,
   storeId,
-  storeName,
   profile,
   exchangeRate,
   rateError,
@@ -24,7 +23,7 @@ export default function Cart({
   const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
 
-  // Set store ID and fetch stores for superadmin/manager
+  // Fetch stores and subscribe to updates
   useEffect(() => {
     if (!profile) return;
 
@@ -57,10 +56,30 @@ export default function Cart({
         if (profile.role === "manager" && data.length > 0) setDynamicStoreId(data[0].id);
       }
     };
+
     fetchStores();
+
+    // Subscribe to store updates
+    const supabase = getSupabaseBrowser();
+    const channel = supabase
+      .channel("stores")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "stores" },
+        (payload) => {
+          setStores((prev) =>
+            prev.map((store) =>
+              store.id === payload.new.id ? { ...store, ...payload.new } : store
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [profile, storeId]);
 
-  // Calcular subtotal, IVA y total con IVA incluido
+  // Calculate subtotal, tax, and total
   const taxRate = 0.16;
   const itemsWithCalculations = items.map((item) => {
     const total_usd = item.price * item.quantity;
@@ -85,7 +104,7 @@ export default function Cart({
   const tax_bsd = exchangeRate ? tax_usd * exchangeRate : null;
   const total_bsd = exchangeRate ? total_usd * exchangeRate : null;
 
-  // Función para imprimir el ticket
+  // Print ticket
   const printTicket = async (order) => {
     try {
       const response = await fetch("/api/print-ticket", {
@@ -128,7 +147,6 @@ export default function Cart({
     }
 
     const finalStoreId = profile.role === "normal" ? storeId : dynamicStoreId;
-    console.log("handleCheckout - finalStoreId before insertion:", finalStoreId);
 
     if (!finalStoreId || isNaN(finalStoreId)) {
       console.error("finalStoreId is invalid:", finalStoreId);
@@ -146,6 +164,17 @@ export default function Cart({
     try {
       const supabase = getSupabaseBrowser();
 
+      // Fetch latest store name
+      const { data: storeData, error: storeError } = await supabase
+        .from("stores")
+        .select("id, name")
+        .eq("id", Number(finalStoreId))
+        .single();
+
+      if (storeError || !storeData) {
+        throw new Error(storeError?.message || "Tienda no encontrada");
+      }
+
       const saleData = {
         store_id: Number(finalStoreId),
         total_amount: total_usd,
@@ -154,7 +183,6 @@ export default function Cart({
         items_count: items.reduce((sum, item) => sum + item.quantity, 0),
         created_by: profile.id,
       };
-      console.log("Data sent to Supabase (sales):", saleData);
 
       const { data: sale, error: saleError } = await supabase
         .from("sales")
@@ -171,7 +199,6 @@ export default function Cart({
         price: item.price,
         subtotal: (item.price * item.quantity) / (1 + taxRate),
       }));
-      console.log("Data sent to Supabase (sale_items):", saleItems);
 
       const { error: itemsError } = await supabase.from("sale_items").insert(saleItems);
 
@@ -196,8 +223,8 @@ export default function Cart({
         tax_bsd,
         total_bsd,
         store: {
-          id: finalStoreId,
-          name: profile.role === "normal" ? storeName : stores.find((s) => s.id === Number(finalStoreId))?.name || "Unknown",
+          id: Number(finalStoreId),
+          name: storeData.name,
         },
       };
 
@@ -265,7 +292,6 @@ export default function Cart({
           </div>
         </div>
 
-        {/* Modal para el recibo */}
         {showPrintModal && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">

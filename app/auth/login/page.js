@@ -15,14 +15,17 @@ export default function LoginPage() {
   useEffect(() => {
     async function performDeferredTasks() {
       const supabase = getSupabaseBrowser();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        console.error("No user logged in:", userError);
-        return;
-      }
-
       try {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+          console.error("No user logged in:", userError?.message || "No user data");
+          // Stay on login page
+          return;
+        }
+
+        console.log("User found:", { userId: user.id, email: user.email });
+
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("id, role, store_id")
@@ -35,14 +38,12 @@ export default function LoginPage() {
           return;
         }
 
-        // Redirect based on role
-        if (profile.role === "normal") {
-          router.push(`/pos?store_id=${profile.store_id}`);
-        } else if (["superadmin", "manager"].includes(profile.role)) {
-          router.push("/"); // Fixed: Redirect to homepage
-        }
+        console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
+
+        // Redirect to homepage for all users
+        router.push("/");
       } catch (err) {
-        console.error("Unexpected error:", err);
+        console.error("Unexpected error in performDeferredTasks:", err);
         setError("Error inesperado al procesar la sesión.");
       }
     }
@@ -69,6 +70,8 @@ export default function LoginPage() {
 
       const { user } = data;
 
+      console.log("Login successful:", { userId: user.id, email: user.email });
+
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("id, role, store_id")
@@ -79,12 +82,10 @@ export default function LoginPage() {
         throw profileError;
       }
 
-      // Redirect based on role
-      if (profile.role === "normal") {
-        router.push(`/`);
-      } else if (["superadmin", "manager"].includes(profile.role)) {
-        router.push("/"); // Fixed: Redirect to homepage
-      }
+      console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
+
+      // Redirect to homepage for all users
+      router.push("/");
     } catch (err) {
       console.error("Login error:", err);
       setError("Error al iniciar sesión: " + (err.message || "Credenciales inválidas"));
