@@ -21,7 +21,7 @@ export default function UserManagement({ users, stores }) {
         .from("profiles")
         .update({
           role: updates.role,
-          store_id: updates.store_id,
+          store_id: updates.role === "normal" ? updates.store_id : null,
           force_password_change: updates.force_password_change,
         })
         .eq("id", userId);
@@ -29,35 +29,56 @@ export default function UserManagement({ users, stores }) {
       if (profileError) throw new Error(`Profile update failed: ${profileError.message}`);
 
       // Update manager_stores for manager role
-      if (updates.role === "manager" && updates.manager_stores?.length > 0) {
-        // Validate manager_stores
-        const validStores = updates.manager_stores.filter((storeId) =>
-          stores.some((s) => s.id === Number.parseInt(storeId))
-        );
-        if (validStores.length === 0) {
-          throw new Error("No se seleccionaron tiendas válidas");
+      if (updates.role === "manager") {
+        // Fetch current manager_stores
+        const { data: currentStores, error: fetchError } = await supabase
+          .from("manager_stores")
+          .select("store_id")
+          .eq("user_id", userId);
+
+        if (fetchError) throw new Error(`Failed to fetch manager_stores: ${fetchError.message}`);
+
+        const currentStoreIds = currentStores.map((s) => s.store_id);
+        const desiredStoreIds = (updates.manager_stores || [])
+          .map((id) => Number.parseInt(id))
+          .filter((id) => stores.some((s) => s.id === id));
+
+        // Validate no duplicates
+        const uniqueStoreIds = [...new Set(desiredStoreIds)];
+        if (uniqueStoreIds.length !== desiredStoreIds.length) {
+          throw new Error("Se detectaron tiendas duplicadas");
         }
 
-        // Delete existing manager_stores
-        const { error: deleteError } = await supabase
-          .from("manager_stores")
-          .delete()
-          .eq("user_id", userId);
-        if (deleteError) throw new Error(`Failed to delete manager_stores: ${deleteError.message}`);
+        // Compute stores to add and remove
+        const toAdd = uniqueStoreIds.filter((id) => !currentStoreIds.includes(id));
+        const toRemove = currentStoreIds.filter((id) => !uniqueStoreIds.includes(id));
 
-        // Insert new manager_stores
-        const managerStoresData = validStores.map((storeId) => ({
-          user_id: userId,
-          store_id: Number.parseInt(storeId),
-        }));
-        console.log("Inserting manager_stores:", managerStoresData);
+        console.log("manager_stores update:", { currentStoreIds, desiredStoreIds, toAdd, toRemove });
 
-        const { error: storesError } = await supabase
-          .from("manager_stores")
-          .insert(managerStoresData);
+        // Insert new assignments
+        if (toAdd.length > 0) {
+          const managerStoresData = toAdd.map((storeId) => ({
+            user_id: userId,
+            store_id: storeId,
+          }));
+          console.log("Inserting manager_stores:", managerStoresData);
+          const { error: insertError } = await supabase
+            .from("manager_stores")
+            .insert(managerStoresData);
+          if (insertError) throw new Error(`Failed to insert manager_stores: ${insertError.message}`);
+        }
 
-        if (storesError) throw new Error(`Failed to insert manager_stores: ${storesError.message}`);
-      } else if (updates.role !== "manager") {
+        // Remove deselected assignments
+        if (toRemove.length > 0) {
+          console.log("Removing manager_stores:", toRemove);
+          const { error: deleteError } = await supabase
+            .from("manager_stores")
+            .delete()
+            .eq("user_id", userId)
+            .in("store_id", toRemove);
+          if (deleteError) throw new Error(`Failed to delete manager_stores: ${deleteError.message}`);
+        }
+      } else {
         // Clear manager_stores for non-managers
         const { error: deleteError } = await supabase
           .from("manager_stores")
@@ -92,6 +113,29 @@ export default function UserManagement({ users, stores }) {
       alert("Error al restablecer la contraseña: " + error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEditUser = async (user) => {
+    const supabase = getSupabaseBrowser();
+    try {
+      // Fetch current manager_stores for the user
+      const { data: managerStores, error: fetchError } = await supabase
+        .from("manager_stores")
+        .select("store_id")
+        .eq("user_id", user.id);
+
+      if (fetchError) throw new Error(`Failed to fetch manager_stores: ${fetchError.message}`);
+
+      // Initialize selectedUser with current manager_stores
+      setSelectedUser({
+        ...user,
+        manager_stores: managerStores.map((s) => s.store_id.toString()), // Store as strings for UI
+      });
+    } catch (error) {
+      console.error("Error loading user data:", error);
+      alert("Error al cargar datos del usuario: " + error.message);
+      setSelectedUser(user); // Fallback to user prop
     }
   };
 
@@ -180,7 +224,7 @@ export default function UserManagement({ users, stores }) {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button
-                          onClick={() => setSelectedUser(user)}
+                          onClick={() => handleEditUser(user)}
                           className="text-blue-600 hover:text-blue-900 mr-3"
                         >
                           Editar
@@ -265,7 +309,9 @@ export default function UserManagement({ users, stores }) {
                             onChange={(e) => {
                               const newStores = e.target.checked
                                 ? [...(selectedUser.manager_stores || []), store.id.toString()]
-                                : (selectedUser.manager_stores || []).filter((id) => id !== store.id.toString());
+                                : (selectedUser.manager_stores || []).filter(
+                                    (id) => id !== store.id.toString()
+                                  );
                               setSelectedUser({
                                 ...selectedUser,
                                 manager_stores: newStores,
