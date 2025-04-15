@@ -19,8 +19,7 @@ export default function LoginPage() {
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
-          console.error("No user logged in:", userError?.message || "No user data");
-          // Stay on login page
+          console.log("No user logged in:", userError?.message || "No user data");
           return;
         }
 
@@ -40,7 +39,6 @@ export default function LoginPage() {
 
         console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
 
-        // Redirect to homepage for all users
         router.push("/");
       } catch (err) {
         console.error("Unexpected error in performDeferredTasks:", err);
@@ -52,20 +50,33 @@ export default function LoginPage() {
   }, [router]);
 
   const handleLogin = async (e) => {
-    e.preventDefault();
+    e.preventDefault(); // Prevent default form submission
+    if (loading) return; // Prevent double submission
+
     setLoading(true);
     setError(null);
+
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedEmail || !trimmedPassword) {
+      setError("Por favor, completa todos los campos.");
+      setLoading(false);
+      return;
+    }
+
+    console.log("Attempting login:", { email: trimmedEmail });
 
     const supabase = getSupabaseBrowser();
 
     try {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+        email: trimmedEmail,
+        password: trimmedPassword,
       });
 
       if (signInError) {
-        throw signInError;
+        throw new Error(signInError.message);
       }
 
       const { user } = data;
@@ -79,16 +90,19 @@ export default function LoginPage() {
         .single();
 
       if (profileError) {
-        throw profileError;
+        throw new Error(`Profile fetch failed: ${profileError.message}`);
       }
 
       console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
 
-      // Redirect to homepage for all users
+      setEmail("");
+      setPassword("");
       router.push("/");
     } catch (err) {
       console.error("Login error:", err);
       setError("Error al iniciar sesión: " + (err.message || "Credenciales inválidas"));
+      setEmail("");
+      setPassword("");
     } finally {
       setLoading(false);
     }
@@ -102,7 +116,7 @@ export default function LoginPage() {
             Iniciar Sesión
           </h2>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+        <form className="mt-8 space-y-6" onSubmit={handleLogin} method="POST">
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
               <label htmlFor="email" className="sr-only">
@@ -110,13 +124,13 @@ export default function LoginPage() {
               </label>
               <input
                 id="email"
-                name="email"
                 type="email"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Correo electrónico"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
               />
             </div>
             <div>
@@ -125,13 +139,13 @@ export default function LoginPage() {
               </label>
               <input
                 id="password"
-                name="password"
                 type="password"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Contraseña"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
               />
             </div>
           </div>
