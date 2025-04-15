@@ -26,23 +26,44 @@ export default function UserManagement({ users, stores }) {
         })
         .eq("id", userId);
 
-      if (profileError) throw profileError;
+      if (profileError) throw new Error(`Profile update failed: ${profileError.message}`);
 
       // Update manager_stores for manager role
       if (updates.role === "manager" && updates.manager_stores?.length > 0) {
+        // Validate manager_stores
+        const validStores = updates.manager_stores.filter((storeId) =>
+          stores.some((s) => s.id === Number.parseInt(storeId))
+        );
+        if (validStores.length === 0) {
+          throw new Error("No se seleccionaron tiendas válidas");
+        }
+
         // Delete existing manager_stores
-        await supabase.from("manager_stores").delete().eq("user_id", userId);
+        const { error: deleteError } = await supabase
+          .from("manager_stores")
+          .delete()
+          .eq("user_id", userId);
+        if (deleteError) throw new Error(`Failed to delete manager_stores: ${deleteError.message}`);
 
         // Insert new manager_stores
-        const managerStoresData = updates.manager_stores.map((storeId) => ({
+        const managerStoresData = validStores.map((storeId) => ({
           user_id: userId,
           store_id: Number.parseInt(storeId),
         }));
-        const { error: storesError } = await supabase.from("manager_stores").insert(managerStoresData);
-        if (storesError) throw storesError;
+        console.log("Inserting manager_stores:", managerStoresData);
+
+        const { error: storesError } = await supabase
+          .from("manager_stores")
+          .insert(managerStoresData);
+
+        if (storesError) throw new Error(`Failed to insert manager_stores: ${storesError.message}`);
       } else if (updates.role !== "manager") {
         // Clear manager_stores for non-managers
-        await supabase.from("manager_stores").delete().eq("user_id", userId);
+        const { error: deleteError } = await supabase
+          .from("manager_stores")
+          .delete()
+          .eq("user_id", userId);
+        if (deleteError) throw new Error(`Failed to clear manager_stores: ${deleteError.message}`);
       }
 
       router.refresh();
