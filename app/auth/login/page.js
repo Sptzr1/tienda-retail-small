@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseBrowser } from "@/lib/supabase";
+import { getSupabaseBrowser, createSession } from "@/lib/supabase";
+import { v4 as uuidv4 } from "uuid";
+import { useSessionContext } from "@/lib/session-context";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -10,8 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // Check if user is already logged in
+  const { setSession } = useSessionContext();
   useEffect(() => {
     async function performDeferredTasks() {
       const supabase = getSupabaseBrowser();
@@ -24,6 +25,20 @@ export default function LoginPage() {
         }
 
         console.log("User found:", { userId: user.id, email: user.email });
+
+        const { data: session, error: sessionError } = await supabase
+          .from("sessions")
+          .select("id, expires_at, is_valid")
+          .eq("user_id", user.id)
+          .eq("is_valid", true)
+          .gte("expires_at", new Date().toISOString())
+          .single();
+
+        if (sessionError || !session) {
+          console.log("No valid session found:", sessionError?.message || "No session data");
+          await supabase.auth.signOut();
+          return;
+        }
 
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
@@ -50,8 +65,8 @@ export default function LoginPage() {
   }, [router]);
 
   const handleLogin = async (e) => {
-    e.preventDefault(); // Prevent default form submission
-    if (loading) return; // Prevent double submission
+    e.preventDefault();
+    if (loading) return;
 
     setLoading(true);
     setError(null);
@@ -70,18 +85,45 @@ export default function LoginPage() {
     const supabase = getSupabaseBrowser();
 
     try {
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password: trimmedPassword,
-      });
+      let signInError;
+      let data;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          ({ data, error: signInError } = await supabase.auth.signInWithPassword({
+            email: trimmedEmail,
+            password: trimmedPassword,
+          }));
+          if (!signInError) break;
+          console.warn(`Login attempt ${attempt} failed:`, signInError);
+          if (attempt === 3) throw signInError;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (retryError) {
+          console.error(`Login retry ${attempt} error:`, retryError);
+          throw retryError;
+        }
+      }
 
       if (signInError) {
+        console.error("Sign-in error details:", signInError);
         throw new Error(signInError.message);
       }
 
-      const { user } = data;
+      const { user, session } = data;
 
       console.log("Login successful:", { userId: user.id, email: user.email });
+
+      let sessionId = session?.id;
+      if (!sessionId) {
+        console.warn("No session ID from auth, generating UUID");
+        sessionId = uuidv4();
+      }
+  
+      try {
+        await createSession(supabase, sessionId, user.id, navigator.userAgent);
+        setSession(sessionId, user.id); // Update context
+      } catch (sessionError) {
+        console.error("Session creation failed:", sessionError);
+      }
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
@@ -90,6 +132,7 @@ export default function LoginPage() {
         .single();
 
       if (profileError) {
+        console.error("Profile fetch error:", profileError);
         throw new Error(`Profile fetch failed: ${profileError.message}`);
       }
 
