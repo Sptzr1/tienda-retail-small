@@ -19,7 +19,6 @@ export default async function Home() {
   let stores = [];
 
   if (session?.user) {
-    // Obtener perfil del usuario
     const { data: profileData } = await supabase
       .from("profiles")
       .select("id, full_name, role, store_id")
@@ -28,9 +27,11 @@ export default async function Home() {
 
     profile = profileData;
 
-    // Determinar las tiendas según el rol
     if (profile?.role === "superadmin") {
-      const { data: storesData } = await supabase.from("stores").select("*").order("name");
+      const { data: storesData } = await supabase
+        .from("stores")
+        .select("id, name, address, is_active, disabled_at")
+        .order("name");
       stores = storesData || [];
     } else if (profile?.role === "manager") {
       const { data: assignedStoresData } = await supabase
@@ -42,7 +43,7 @@ export default async function Home() {
         const storeIds = assignedStoresData.map((store) => store.store_id);
         const { data: storesData } = await supabase
           .from("stores")
-          .select("*")
+          .select("id, name, address, is_active, disabled_at")
           .in("id", storeIds)
           .order("name");
         stores = storesData || [];
@@ -50,7 +51,7 @@ export default async function Home() {
     } else if (profile?.role === "normal" && profile?.store_id) {
       const { data: storeData } = await supabase
         .from("stores")
-        .select("*")
+        .select("id, name, address, is_active, disabled_at")
         .eq("id", profile.store_id)
         .single();
       stores = storeData ? [storeData] : [];
