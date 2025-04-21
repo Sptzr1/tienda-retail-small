@@ -1,362 +1,252 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { getSupabaseBrowser, createSession, extendSession, invalidateSession } from "@/lib/supabase";
+import { useEffect, useCallback, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function SessionManager() {
+export default function SessionManager({ children }) {
   const router = useRouter();
-  const [sessionExpiring, setSessionExpiring] = useState(false);
-  const [countdown, setCountdown] = useState(30);
-  const [expiresAt, setExpiresAt] = useState(null);
-  const [isHydrated, setIsHydrated] = useState(false);
+  const pathname = usePathname();
+  const [isChecking, setIsChecking] = useState(true);
+  const [sessionData, setSessionData] = useState(null);
+  const [showExtensionPrompt, setShowExtensionPrompt] = useState(false);
+  const [showLogoutMessage, setShowLogoutMessage] = useState(false);
 
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
+  const createSession = useCallback(async (userId) => {
+    const supabase = getSupabaseBrowser();
+    const sessionId = uuidv4();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-  const fetchSessionExpiration = useCallback(async (retryCount = 0) => {
-    try {
-      const supabase = getSupabaseBrowser();
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+    const { data, error } = await supabase
+      .from("sessions")
+      .insert([{ id: sessionId, user_id: userId, expires_at: expiresAt.toISOString() }])
+      .select()
+      .single();
 
-      if (sessionError || !session || !session.user?.id) {
-        console.error("Invalid session data:", {
-          error: sessionError?.message,
-          hasSession: !!session,
-          hasSessionId: !!session?.id,
-          hasUserId: !!session?.user?.id,
-        });
-        if (isHydrated && retryCount >= 2) {
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-        }
-        return null;
-      }
-
-      let sessionId = session.id;
-      if (!sessionId) {
-        console.warn("No session ID, checking public.sessions");
-        const { data, error } = await supabase
-          .from("sessions")
-          .select("id, expires_at, is_valid")
-          .eq("user_id", session.user.id)
-          .eq("is_valid", true)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        if (error || !data?.id) {
-          console.error("No valid session found:", error?.message);
-          if (retryCount < 2) {
-            sessionId = uuidv4();
-            const newExpiresAt = await createSession(
-              supabase,
-              sessionId,
-              session.user.id,
-              navigator.userAgent
-            );
-            console.log("Session created:", { sessionId, expires_at: newExpiresAt });
-            setExpiresAt(newExpiresAt);
-            return newExpiresAt;
-          }
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-          return null;
-        }
-        sessionId = data.id;
-        const expiration = new Date(data.expires_at);
-        if (!data.is_valid) {
-          console.log("Session invalid:", data);
-          await invalidateSession(supabase, sessionId, session.user.id);
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-          return null;
-        }
-        console.log("Session recovered:", { sessionId, expires_at: expiration });
-        setExpiresAt(expiration);
-        return expiration;
-      }
-
-      console.log("Session found:", {
-        sessionId: session.id,
-        userId: session.user.id,
-        expiresIn: session.expires_in,
-      });
-
-      const { data, error } = await supabase
-        .from("sessions")
-        .select("expires_at, last_activity, is_valid")
-        .eq("id", sessionId)
-        .eq("user_id", session.user.id)
-        .single();
-
-      if (error) {
-        console.error("Session fetch error:", error);
-        if (error.code === "PGRST116" && retryCount < 2) {
-          const newExpiresAt = await createSession(
-            supabase,
-            sessionId,
-            session.user.id,
-            navigator.userAgent
-          );
-          console.log("Session created:", { sessionId, expires_at: newExpiresAt });
-          setExpiresAt(newExpiresAt);
-          return newExpiresAt;
-        }
-        if (retryCount < 2) {
-          return fetchSessionExpiration(retryCount + 1);
-        }
-        return null;
-      }
-
-      if (!data?.is_valid) {
-        console.log("Session invalid:", data);
-        await invalidateSession(supabase, sessionId, session.user.id);
-        if (isHydrated) {
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-        }
-        return null;
-      }
-
-      const expiration = new Date(data.expires_at);
-      console.log("Session fetched:", {
-        sessionId,
-        expires_at: expiration,
-        is_valid: data.is_valid,
-      });
-      setExpiresAt(expiration);
-      return expiration;
-    } catch (error) {
-      console.error("Error fetching session expiration:", error);
-      if (retryCount < 2) {
-        return fetchSessionExpiration(retryCount + 1);
-      }
+    if (error) {
+      console.error("Error creating session:", error);
       return null;
     }
-  }, [isHydrated, router]);
 
-  const handleExtendSession = async () => {
-    try {
-      const supabase = getSupabaseBrowser();
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (sessionError || !session || !session.user?.id) {
-        console.error("Invalid session for extend:", {
-          error: sessionError?.message,
-          hasSession: !!session,
-          hasSessionId: !!session?.id,
-          hasUserId: !!session?.user?.id,
-        });
-        if (isHydrated) {
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-        }
-        return;
-      }
-
-      let sessionId = session.id;
-      if (!sessionId) {
-        const { data, error } = await supabase
-          .from("sessions")
-          .select("id")
-          .eq("user_id", session.user.id)
-          .eq("is_valid", true)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        if (error || !data?.id) {
-          console.error("No valid session for extend:", error?.message);
-          await supabase.auth.signOut();
-          router.push("/auth/login");
-          return;
-        }
-        sessionId = data.id;
-      }
-
-      const { expiresAt: newExpiresAt } = await extendSession(supabase, sessionId, session.user.id);
-      console.log("Session extended:", { sessionId, newExpiresAt });
-      setExpiresAt(new Date(newExpiresAt));
-      setSessionExpiring(false);
-      setCountdown(30);
-    } catch (error) {
-      console.error("Error extending session:", error);
-      await handleLogout();
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      const supabase = getSupabaseBrowser();
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (!sessionError && session?.user?.id) {
-        await invalidateSession(supabase, session?.id, session.user.id);
-        console.log("Session logged out:", { sessionId: session?.id, userId: session.user.id });
-      } else {
-        console.error("No valid session for logout:", sessionError?.message);
-      }
-
-      await supabase.auth.signOut();
-      if (isHydrated) {
-        router.push("/auth/login?error=session_expired");
-      }
-    } catch (error) {
-      console.error("Error logging out:", error);
-      if (isHydrated) {
-        router.push("/auth/login");
-      }
-    }
-  };
-
-  const updateActivity = useCallback(async () => {
-    try {
-      const supabase = getSupabaseBrowser();
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (sessionError || !session || !session.user?.id) {
-        console.error("Invalid session for activity update:", {
-          error: sessionError?.message,
-          hasSession: !!session,
-          hasSessionId: !!session?.id,
-          hasUserId: !!session?.user?.id,
-        });
-        return;
-      }
-
-      let sessionId = session.id;
-      if (!sessionId) {
-        const { data, error } = await supabase
-          .from("sessions")
-          .select("id")
-          .eq("user_id", session.user.id)
-          .eq("is_valid", true)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        if (error || !data?.id) {
-          console.error("No valid session for activity update:", error?.message);
-          return;
-        }
-        sessionId = data.id;
-      }
-
-      const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const { error: updateError } = await supabase
-        .from("sessions")
-        .update({
-          last_activity: new Date().toISOString(),
-          expires_at: newExpiresAt.toISOString(),
-          is_valid: true,
-        })
-        .eq("id", sessionId)
-        .eq("user_id", session.user.id);
-
-      if (updateError) {
-        console.error("Error updating activity:", updateError);
-        return;
-      }
-
-      console.log("Activity updated:", { sessionId, newExpiresAt });
-      setExpiresAt(newExpiresAt);
-    } catch (error) {
-      console.error("Error in activity update:", error);
-    }
+    console.log("Session created:", { sessionId, expires_at: expiresAt.toISOString() });
+    return data;
   }, []);
 
-  useEffect(() => {
-    const handleActivity = () => {
-      updateActivity();
-    };
+  const updateSessionActivity = useCallback(async (sessionId) => {
+    const supabase = getSupabaseBrowser();
+    const newExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Extend 15 minutes
 
-    window.addEventListener("click", handleActivity);
-    window.addEventListener("keydown", handleActivity);
+    const { error } = await supabase
+      .from("sessions")
+      .update({ expires_at: newExpiresAt.toISOString() })
+      .eq("id", sessionId);
 
-    return () => {
-      window.removeEventListener("click", handleActivity);
-      window.removeEventListener("keydown", handleActivity);
-    };
-  }, [updateActivity]);
+    if (error) {
+      console.error("Error updating session activity:", error);
+      return;
+    }
 
-  useEffect(() => {
-    const checkSessionExpiration = async () => {
-      const expiration = await fetchSessionExpiration();
+    console.log("Activity updated:", { sessionId, newExpiresAt: newExpiresAt.toISOString() });
+    setSessionData((prev) => (prev ? { ...prev, expires_at: newExpiresAt.toISOString() } : prev));
+    setShowExtensionPrompt(false);
+  }, []);
 
-      if (!expiration) {
-        setSessionExpiring(false);
+  const fetchSessionExpiration = useCallback(async (sessionId) => {
+    console.log("Fetching session, ID:", sessionId || "none");
+    if (!sessionId) {
+      console.log("No session ID, checking public.sessions");
+      const supabase = getSupabaseBrowser();
+      const { data: sessions, error } = await supabase
+        .from("sessions")
+        .select("id, expires_at")
+        .gt("expires_at", new Date().toISOString());
+
+      if (error) {
+        console.error("Error fetching sessions:", error);
+        return null;
+      }
+
+      if (sessions && sessions.length > 0) {
+        console.log("Session recovered:", sessions[0]);
+        return sessions[0];
+      }
+      console.log("No active sessions found");
+      return null;
+    }
+
+    const supabase = getSupabaseBrowser();
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id, expires_at")
+      .eq("id", sessionId)
+      .single();
+
+    if (error) {
+      console.error("Error fetching session:", error);
+      return null;
+    }
+
+    console.log("Session fetched:", data);
+    return data;
+  }, []);
+
+  const handleExtendSession = useCallback(() => {
+    if (sessionData?.id) {
+      console.log("Extending session:", sessionData.id);
+      updateSessionActivity(sessionData.id);
+    }
+  }, [sessionData, updateSessionActivity]);
+
+  const handleLogout = useCallback(async () => {
+    const supabase = getSupabaseBrowser();
+    console.log("Logging out due to expiry or user action");
+    await supabase.auth.signOut();
+    setShowExtensionPrompt(false);
+    setShowLogoutMessage(true);
+    setTimeout(() => {
+      console.log("Redirecting to login after logout message");
+      setShowLogoutMessage(false);
+      router.push("/auth/login");
+    }, 5000); // Show logout message for 5 seconds
+  }, [router]);
+
+  const checkSessionExpiration = useCallback(async () => {
+    console.log("Checking session expiration");
+    const supabase = getSupabaseBrowser();
+    const { data: { session: authSession } } = await supabase.auth.getSession();
+
+    if (!authSession?.user?.id) {
+      console.log("No auth session, redirecting to login");
+      if (pathname !== "/auth/login" && pathname !== "/auth/register") {
+        router.push("/auth/login");
+      }
+      setIsChecking(false);
+      return;
+    }
+
+    let session = await fetchSessionExpiration(authSession.session_id);
+
+    if (!session) {
+      console.log("No session found, creating new one for user:", authSession.user.id);
+      session = await createSession(authSession.user.id);
+      if (!session) {
+        console.error("Failed to create session, signing out");
+        await supabase.auth.signOut();
+        router.push("/auth/login");
+        setIsChecking(false);
         return;
       }
+    }
 
-      const now = new Date();
-      const timeUntilExpiration = expiration.getTime() - now.getTime();
+    setSessionData(session);
+    const expiresAt = new Date(session.expires_at);
+    if (expiresAt < new Date()) {
+      console.log("Session expired at:", session.expires_at);
+      handleLogout();
+      return;
+    }
 
-      console.log("Time until expiration:", { minutes: timeUntilExpiration / 60000 });
+    const timeUntilExpiration = (expiresAt - new Date()) / (1000 * 60);
+    console.log("Time until expiration:", { minutes: timeUntilExpiration.toFixed(2) });
 
-      if (timeUntilExpiration > 0 && timeUntilExpiration <= 5 * 60 * 1000) {
-        setSessionExpiring(true);
-      } else {
-        setSessionExpiring(false);
-      }
-    };
+    // Show extension prompt ~1 minute before expiry
+    if (timeUntilExpiration <= 1 && timeUntilExpiration > 0) {
+      console.log("Showing extension prompt, time left:", timeUntilExpiration.toFixed(2));
+      setShowExtensionPrompt(true);
+      setTimeout(() => {
+        if (!document.hidden && new Date(session.expires_at) <= new Date()) {
+          console.log("Prompt timed out, logging out");
+          handleLogout();
+        }
+      }, 30 * 1000); // Prompt lasts 30 seconds
+    }
 
-    checkSessionExpiration();
-    const interval = setInterval(checkSessionExpiration, 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, [fetchSessionExpiration]);
+    setIsChecking(false);
+  }, [router, pathname, createSession, fetchSessionExpiration, handleLogout]);
 
   useEffect(() => {
-    if (!sessionExpiring) return;
+    console.log("Initial session check");
+    checkSessionExpiration();
+  }, [checkSessionExpiration]);
 
-    setCountdown(30);
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          handleLogout();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+  useEffect(() => {
+    if (!isChecking) {
+      console.log("Starting session check interval");
+      const interval = setInterval(checkSessionExpiration, 60 * 1000); // Check every minute
+      return () => {
+        console.log("Clearing session check interval");
+        clearInterval(interval);
+      };
+    }
+  }, [isChecking, checkSessionExpiration]);
 
-    return () => clearInterval(timer);
-  }, [sessionExpiring]);
+  useEffect(() => {
+    if (!isChecking) {
+      const handleActivity = () => {
+        const supabase = getSupabaseBrowser();
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.session_id) {
+            console.log("Activity detected, updating session:", session.session_id);
+            updateSessionActivity(session.session_id);
+          }
+        });
+      };
 
-  if (!sessionExpiring) return null;
+      window.addEventListener("mousemove", handleActivity);
+      window.addEventListener("keydown", handleActivity);
+      window.addEventListener("click", handleActivity);
+
+      return () => {
+        console.log("Removing activity listeners");
+        window.removeEventListener("mousemove", handleActivity);
+        window.removeEventListener("keydown", handleActivity);
+        window.removeEventListener("click", handleActivity);
+      };
+    }
+  }, [isChecking, updateSessionActivity]);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 bg-yellow-100 p-4 shadow-lg">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div>
-          <p className="font-medium text-yellow-800">
-            Tu sesión expirará pronto. ¿Deseas extenderla por 24 horas más?
-          </p>
-          <p className="text-sm text-yellow-700">La sesión se cerrará automáticamente en {countdown} segundos.</p>
+    <>
+      {children}
+      {showExtensionPrompt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              Sesión por expirar
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Tu sesión está por expirar en menos de un minuto. ¿Deseas extenderla?
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 text-gray-700 font-medium"
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={handleExtendSession}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                Extender
+              </button>
+            </div>
+          </div>
         </div>
-        <button
-          onClick={handleExtendSession}
-          className="px-4 py-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-        >
-          Extender sesión
-        </button>
-      </div>
-    </div>
+      )}
+      {showLogoutMessage && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              Sesión cerrada
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Tu sesión ha sido cerrada por inactividad. Redirigiendo al inicio...
+            </p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
