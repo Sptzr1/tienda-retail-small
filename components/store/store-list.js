@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ShoppingCart, Pencil, Plus, Trash2 } from "lucide-react";
+import { ShoppingCart, Pencil, Plus, Trash2, CheckCircle } from "lucide-react";
 import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function StoreList({ stores, role }) {
@@ -121,6 +121,27 @@ export default function StoreList({ stores, role }) {
     setError(null);
   };
 
+  const handleEnableStore = async (storeId) => {
+    const supabase = getSupabaseBrowser();
+    const { error: enableError } = await supabase
+      .from("stores")
+      .update({ is_active: true, disabled_at: null })
+      .eq("id", storeId);
+
+    if (enableError) {
+      console.error("Error enabling store:", enableError);
+      setError("Error al habilitar la tienda: " + enableError.message);
+      return;
+    }
+
+    setStoreList((prev) =>
+      prev.map((store) =>
+        store.id === storeId ? { ...store, is_active: true, disabled_at: null } : store
+      )
+    );
+    setError(null);
+  };
+
   const handleDisableStore = async (storeId) => {
     const supabase = getSupabaseBrowser();
     const { error: disableError } = await supabase
@@ -214,6 +235,26 @@ export default function StoreList({ stores, role }) {
     return daysDiff >= 3;
   };
 
+  const getTimeRemaining = (disabledAt) => {
+    const disabledDate = new Date(disabledAt);
+    const endDate = new Date(disabledDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const msRemaining = endDate - now;
+
+    if (msRemaining <= 0) return "0 minutos";
+
+    const days = Math.floor(msRemaining / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((msRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
+
+    let parts = [];
+    if (days > 0) parts.push(`${days} día${days !== 1 ? "s" : ""}`);
+    if (hours > 0) parts.push(`${hours} hora${hours !== 1 ? "s" : ""}`);
+    if (minutes > 0 || parts.length === 0) parts.push(`${minutes} minuto${minutes !== 1 ? "s" : ""}`);
+
+    return parts.join(", ");
+  };
+
   return (
     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
       {storeList.map((store) => (
@@ -247,6 +288,15 @@ export default function StoreList({ stores, role }) {
           </div>
           {role === "superadmin" && (
             <div className="absolute top-2 right-2 flex space-x-2">
+              {!store.is_active && (
+                <button
+                  onClick={() => handleEnableStore(store.id)}
+                  className="p-1 text-green-500 hover:text-green-700"
+                  aria-label={`Habilitar ${store.name}`}
+                >
+                  <CheckCircle className="h-5 w-5" />
+                </button>
+              )}
               <button
                 onClick={() => handleEditClick(store)}
                 className="p-1 text-gray-500 hover:text-gray-700"
@@ -257,7 +307,7 @@ export default function StoreList({ stores, role }) {
               <button
                 onClick={() => handleDeleteClick(store)}
                 className="p-1 text-red-500 hover:text-red-700"
-                aria-label={`Borrar ${store.name}`}
+                aria-label={`${store.is_active ? "Inhabilitar" : "Borrar"} ${store.name}`}
               >
                 <Trash2 className="h-5 w-5" />
               </button>
@@ -391,45 +441,42 @@ export default function StoreList({ stores, role }) {
                   </button>
                 </div>
               </>
-            ) : deletingStore.hasProducts && isPermanentDeleteEligible(deletingStore) ? (
+            ) : !deletingStore.is_active && !isPermanentDeleteEligible(deletingStore) ? (
               <>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Borrado Definitivo de {deletingStore.name}
+                  No se puede borrar {deletingStore.name}
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  El borrado de {deletingStore.name} será definitivo y eliminará todos los productos asociados. Escribe <strong>BORRADO TOTAL</strong> para confirmar.
+                  Aún no puedes borrar esta tienda. Tiempo restante: {getTimeRemaining(deletingStore.disabled_at)}.
                 </p>
-                <input
-                  type="text"
-                  value={deleteConfirmText}
-                  onChange={(e) => setDeleteConfirmText(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md mb-4 focus:ring-red-500 focus:border-red-500"
-                  placeholder="Escribe BORRADO TOTAL"
-                />
-                {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
-                <div className="flex justify-end space-x-2">
+                <div className="flex justify-end">
                   <button
                     onClick={handleCancelDelete}
                     className="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 text-gray-700"
                   >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={() => handleDeleteStore(deletingStore.id, true)}
-                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-                  >
-                    Confirmar Borrado
+                    Aceptar
                   </button>
                 </div>
               </>
             ) : (
               <>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Borrar {deletingStore.name}
+                  Borrar Definitivamente {deletingStore.name}
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  ¿Estás seguro de borrar {deletingStore.name}? Esta acción no se puede deshacer.
+                  {deletingStore.hasProducts
+                    ? `El borrado de ${deletingStore.name} será definitivo y eliminará todos los productos asociados. Escribe "BORRADO TOTAL" para confirmar.`
+                    : `¿Estás seguro de borrar ${deletingStore.name}? Esta acción no se puede deshacer.`}
                 </p>
+                {deletingStore.hasProducts && (
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-md mb-4 focus:ring-red-500 focus:border-red-500"
+                    placeholder="Escribe BORRADO TOTAL"
+                  />
+                )}
                 {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
                 <div className="flex justify-end space-x-2">
                   <button
@@ -439,10 +486,10 @@ export default function StoreList({ stores, role }) {
                     Cancelar
                   </button>
                   <button
-                    onClick={() => handleDeleteStore(deletingStore.id, false)}
+                    onClick={() => handleDeleteStore(deletingStore.id, deletingStore.hasProducts)}
                     className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
                   >
-                    Borrar
+                    Confirmar Borrado
                   </button>
                 </div>
               </>
