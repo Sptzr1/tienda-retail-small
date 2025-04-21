@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Minus, Plus, Trash2, Printer } from "lucide-react";
+import { Minus, Plus, Trash2, Printer, DollarSign, Currency, CreditCard } from "lucide-react";
 import { getSupabaseBrowser } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
@@ -22,6 +22,7 @@ export default function Cart({
   const [completedOrder, setCompletedOrder] = useState(null);
   const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   // Fetch stores and subscribe to updates
   useEffect(() => {
@@ -124,6 +125,7 @@ export default function Cart({
           subtotal_bsd,
           tax_bsd,
           total_bsd,
+          payment_method: order.payment_method,
         }),
       });
 
@@ -156,6 +158,11 @@ export default function Cart({
 
     if (!exchangeRate) {
       alert("Error: Tasa de cambio no disponible. Por favor, contacta al administrador.");
+      return;
+    }
+
+    if (!paymentMethod) {
+      alert("Error: Selecciona un método de pago.");
       return;
     }
 
@@ -204,6 +211,13 @@ export default function Cart({
 
       if (itemsError) throw itemsError;
 
+      // Insert payment method
+      const { error: paymentError } = await supabase
+        .from("payment_methods")
+        .insert([{ sale_id: sale.id, method: paymentMethod }]);
+
+      if (paymentError) throw paymentError;
+
       for (const item of items) {
         const { error: stockError } = await supabase
           .from("products")
@@ -226,14 +240,14 @@ export default function Cart({
           id: Number(finalStoreId),
           name: storeData.name,
         },
+        payment_method: paymentMethod,
       };
 
       setCompletedOrder(order);
       setShowReceipt(true);
+      setPaymentMethod("");
       clearCart();
       router.refresh();
-
-      await printTicket(order);
     } catch (error) {
       console.error("Error processing checkout:", error);
       alert("Error al procesar la venta: " + error.message);
@@ -328,13 +342,17 @@ export default function Cart({
                   <span>Subtotal:</span>
                   <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
                 </div>
-                <div className="flex justify-between">
+                {/* <div className="flex justify-between">
                   <span>IVA (16%):</span>
                   <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
-                </div>
+                </div> */}
                 <div className="flex justify-between font-bold text-base">
                   <span>Total:</span>
                   <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Método de pago:</span>
+                  <span>{completedOrder.payment_method}</span>
                 </div>
               </div>
 
@@ -395,13 +413,17 @@ export default function Cart({
                 <span>Subtotal:</span>
                 <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
               </div>
-              <div className="flex justify-between">
+              {/* <div className="flex justify-between">
                 <span>IVA (16%):</span>
                 <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
-              </div>
+              </div> */}
               <div className="flex justify-between font-bold text-base">
                 <span>Total:</span>
                 <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Método de pago:</span>
+                <span>{completedOrder.payment_method}</span>
               </div>
             </div>
 
@@ -503,7 +525,7 @@ export default function Cart({
               <span>{formatCurrency(subtotal_bsd, "VES")}</span>
             </div>
           )}
-          <div className="flex justify-between">
+          {/* <div className="flex justify-between">
             <span>IVA (16%):</span>
             <span>{formatCurrency(tax_usd)}</span>
           </div>
@@ -512,7 +534,7 @@ export default function Cart({
               <span>IVA (Bs.D):</span>
               <span>{formatCurrency(tax_bsd, "VES")}</span>
             </div>
-          )}
+          )} */}
           <div className="flex justify-between font-bold">
             <span>Total:</span>
             <span>{formatCurrency(total_usd)}</span>
@@ -525,9 +547,36 @@ export default function Cart({
           )}
         </div>
 
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Método de pago
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { method: "Efectivo", icon: <DollarSign className="h-6 w-6" /> },
+              { method: "Divisa", icon: <Currency className="h-6 w-6" /> },
+              { method: "Débito", icon: <CreditCard className="h-6 w-6" /> },
+              { method: "Crédito", icon: <CreditCard className="h-6 w-6 text-blue-600" /> },
+            ].map(({ method, icon }) => (
+              <button
+                key={method}
+                onClick={() => setPaymentMethod(method)}
+                className={`flex items-center justify-center p-4 border rounded-md hover:bg-gray-100 ${
+                  paymentMethod === method
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-gray-300"
+                }`}
+              >
+                {icon}
+                <span className="ml-2 text-sm font-medium">{method}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button
           onClick={handleCheckout}
-          disabled={items.length === 0 || loading || !exchangeRate}
+          disabled={items.length === 0 || loading || !exchangeRate || !paymentMethod}
           className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Procesando..." : "Completar venta"}
