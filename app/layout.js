@@ -1,6 +1,6 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
-import SessionManager from "@/components/session/session-manager";
+import SessionManagerComponent from "@/components/session/session-manager";
 import { SessionProvider } from "@/lib/session-context";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -15,8 +15,7 @@ export default function RootLayout({ children }) {
     <html lang="es">
       <body className={inter.className} suppressHydrationWarning>
         <SessionProvider>
-          {children}
-          <SessionManager />
+          <SessionManagerComponent>{children}</SessionManagerComponent>
         </SessionProvider>
       </body>
     </html>
