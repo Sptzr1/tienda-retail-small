@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import SalesReport from "./sales-report"
+import { useState } from "react";
+import SalesReport from "./sales-report";
 
 export default function ReportsManager({
   profile,
@@ -11,13 +11,18 @@ export default function ReportsManager({
   topProducts,
   lowStockProducts,
   dailySales,
+  isDemo,
 }) {
-  const [activeTab, setActiveTab] = useState("sales")
+  const [activeTab, setActiveTab] = useState("sales");
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Reportes</h1>
-
+      {isDemo && (
+        <p className="mb-4 text-sm text-blue-600">
+          Usuarios demo solo pueden ver reportes.
+        </p>
+      )}
       <div className="mb-4 border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           <button
@@ -33,7 +38,7 @@ export default function ReportsManager({
         </nav>
       </div>
 
-      {activeTab === "sales" && <SalesReport profile={profile} stores={stores} storeId={storeId} />}
+      {activeTab === "sales" && <SalesReport profile={profile} stores={stores} storeId={storeId} isDemo={isDemo} />}
     </div>
-  )
+  );
 }

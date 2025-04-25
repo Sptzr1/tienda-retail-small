@@ -16,19 +16,23 @@ export default async function AdminLayout({ children }) {
     redirect("/auth/login?redirectedFrom=/admin");
   }
 
-  // Verificar si el usuario tiene un rol permitido (super_admin o manager)
+  // Verificar si el usuario tiene un rol permitido (super_admin, manager, o demo con privilegios)
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, demo_view_privilege")
     .eq("id", session.user.id)
     .single();
 
   if (error) {
     console.error("Error fetching profile in layout:", error);
-    redirect("/auth/login"); // O maneja el error de otra forma
+    redirect("/auth/login");
   }
 
-  if (profile.role !== "super_admin" && profile.role !== "manager") {
+  if (
+    profile.role !== "super_admin" &&
+    profile.role !== "manager" &&
+    !(profile.role === "demo" && (profile.demo_view_privilege === "super_admin" || profile.demo_view_privilege === "manager"))
+  ) {
     redirect("/");
   }
 
@@ -39,4 +43,3 @@ export default async function AdminLayout({ children }) {
     </div>
   );
 }
-

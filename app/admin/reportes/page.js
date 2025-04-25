@@ -16,7 +16,7 @@ export default async function ReportsPage() {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, role, store_id")
+    .select("id, full_name, role, store_id, demo_view_privilege")
     .eq("id", session.user.id)
     .single();
 
@@ -25,19 +25,23 @@ export default async function ReportsPage() {
     return <div>Error al cargar el perfil</div>;
   }
 
-  // Permitir solo a super_admin y manager
-  if (profile.role !== "super_admin" && profile.role !== "manager") {
+  // Permitir super_admin, manager, y demo con privilegios
+  if (
+    profile.role !== "super_admin" &&
+    profile.role !== "manager" &&
+    !(profile.role === "demo" && (profile.demo_view_privilege === "super_admin" || profile.demo_view_privilege === "manager"))
+  ) {
     redirect("/");
   }
 
   let stores = [];
   let storeId = null;
 
-  if (profile.role === "super_admin") {
+  if (profile.role === "super_admin" || (profile.role === "demo" && profile.demo_view_privilege === "super_admin")) {
     const { data: storesData, error: storesError } = await supabase.from("stores").select("id, name").order("name");
     if (storesError) console.error("Stores error:", storesError);
     stores = storesData || [];
-  } else if (profile.role === "manager") {
+  } else if (profile.role === "manager" || (profile.role === "demo" && profile.demo_view_privilege === "manager")) {
     const { data: assignedStores, error: storesError } = await supabase
       .from("manager_stores")
       .select("store_id, stores(id, name)")
@@ -67,7 +71,7 @@ export default async function ReportsPage() {
     .lte("created_at", lastDayOfMonth)
     .order("created_at", { ascending: false });
 
-  if (profile.role === "manager") {
+  if (profile.role === "manager" || (profile.role === "demo" && profile.demo_view_privilege === "manager")) {
     salesQuery = salesQuery.in("store_id", stores.map((s) => s.id));
   }
 
@@ -79,8 +83,8 @@ export default async function ReportsPage() {
 
   const topProductsQuery = supabase.rpc("get_top_products", {
     limit_count: 10,
-    store_filter: profile.role === "manager" ? storeId : null,
-    is_admin: profile.role === "super_admin",
+    store_filter: (profile.role === "manager" || (profile.role === "demo" && profile.demo_view_privilege === "manager")) ? storeId : null,
+    is_admin: profile.role === "super_admin" || (profile.role === "demo" && profile.demo_view_privilege === "super_admin"),
     start_date: firstDayOfMonth,
     end_date: lastDayOfMonth,
   });
@@ -106,7 +110,7 @@ export default async function ReportsPage() {
     `)
     .order("quantity");
 
-  if (profile.role === "manager") {
+  if (profile.role === "manager" || (profile.role === "demo" && profile.demo_view_privilege === "manager")) {
     lowStockQuery = lowStockQuery.in("store_id", stores.map((s) => s.id));
   }
 
@@ -120,8 +124,8 @@ export default async function ReportsPage() {
 
   const dailySalesQuery = supabase.rpc("get_daily_sales", {
     days_count: 30,
-    store_filter: profile.role === "manager" ? storeId : null,
-    is_admin: profile.role === "super_admin",
+    store_filter: (profile.role === "manager" || (profile.role === "demo" && profile.demo_view_privilege === "manager")) ? storeId : null,
+    is_admin: profile.role === "super_admin" || (profile.role === "demo" && profile.demo_view_privilege === "super_admin"),
   });
 
   const { data: dailySales, error: dailySalesError } = await dailySalesQuery;
@@ -137,6 +141,7 @@ export default async function ReportsPage() {
         topProducts={topProducts || []}
         lowStockProducts={lowStockProducts || []}
         dailySales={dailySales || []}
+        isDemo={profile.role === "demo"}
       />
     </div>
   );

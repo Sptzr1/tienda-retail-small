@@ -1,36 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
-import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function ProductList({ products }) {
+export default function ProductList({ products, exchangeRate, isDemo }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(null);
-  const [exchangeRate, setExchangeRate] = useState(null);
-  const [rateError, setRateError] = useState(null);
-
-  // Fetch exchange rate
-  useEffect(() => {
-    const fetchRate = async () => {
-      const supabase = getSupabaseBrowser();
-      const { data, error } = await supabase
-        .from("exchange_rates")
-        .select("rate")
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (error || !data || data.length === 0) {
-        console.error("Error fetching exchange rate:", { error, data });
-        setRateError("No se pudo cargar la tasa de cambio.");
-      } else {
-        const rate = parseFloat(data[0].rate);
-        setExchangeRate(isNaN(rate) ? null : rate);
-      }
-    };
-    fetchRate();
-  }, []);
 
   const handleDelete = async (id) => {
     if (!confirm("¿Estás seguro de eliminar este producto?")) return;
@@ -38,7 +14,7 @@ export default function ProductList({ products }) {
     setDeleting(id);
 
     try {
-      const supabase = getSupabaseBrowser();
+      const supabase = await import("@/lib/supabase").then((m) => m.getSupabaseBrowser());
       const { error } = await supabase.from("products").delete().eq("id", id);
 
       if (error) throw error;
@@ -46,7 +22,7 @@ export default function ProductList({ products }) {
       router.refresh();
     } catch (error) {
       console.error("Error deleting product:", error);
-      alert("Error al eliminar el producto");
+      alert("Error al eliminar el producto: " + error.message);
     } finally {
       setDeleting(null);
     }
@@ -68,9 +44,6 @@ export default function ProductList({ products }) {
 
   return (
     <div className="mt-4 flex flex-col">
-      {rateError && (
-        <p className="text-red-600 text-sm mb-2">{rateError}</p>
-      )}
       <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
         <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
           <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
@@ -107,15 +80,20 @@ export default function ProductList({ products }) {
                   >
                     Stock
                   </th>
-                  <th scope="col" className="relative px-6 py-3">
-                    <span className="sr-only">Acciones</span>
-                  </th>
+                  {!isDemo && (
+                    <th scope="col" className="relative px-6 py-3">
+                      <span className="sr-only">Acciones</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {products.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="px-6 py-4 text-center text-sm text-gray-500">
+                    <td
+                      colSpan={isDemo ? 5 : 6}
+                      className="px-6 py-4 text-center text-sm text-gray-500"
+                    >
                       No hay productos registrados
                     </td>
                   </tr>
@@ -158,15 +136,17 @@ export default function ProductList({ products }) {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{product.stock}</div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={() => handleDelete(product.id)}
-                          disabled={deleting === product.id}
-                          className="text-red-600 hover:text-red-900 disabled:opacity-50"
-                        >
-                          <Trash2 className="h-5 w-5" />
-                        </button>
-                      </td>
+                      {!isDemo && (
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <button
+                            onClick={() => handleDelete(product.id)}
+                            disabled={deleting === product.id}
+                            className="text-red-600 hover:text-red-900 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -175,7 +155,11 @@ export default function ProductList({ products }) {
           </div>
         </div>
       </div>
+      {isDemo && (
+        <p className="mt-4 text-sm text-blue-600">
+          Usuarios demo no pueden eliminar productos.
+        </p>
+      )}
     </div>
   );
 }
-
