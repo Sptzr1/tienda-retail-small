@@ -30,7 +30,7 @@ export default function Cart({
 
     setDynamicStoreId(profile.role === "normal" ? storeId : "");
 
-    if (profile.role !== "superadmin" && profile.role !== "manager") return;
+    if (profile.role !== "super_admin" && profile.role !== "manager") return;
 
     const fetchStores = async () => {
       const supabase = getSupabaseBrowser();
@@ -442,7 +442,7 @@ export default function Cart({
         <h2 className="text-lg font-semibold">Carrito de compra</h2>
       </div>
 
-      {(profile && (profile.role === "superadmin" || profile.role === "manager")) && (
+      {(profile && (profile.role === "super_admin" || profile.role === "manager")) && (
         <div className="p-4">
           <label htmlFor="dynamicStoreId" className="block text-sm font-medium text-gray-700">Tienda</label>
           <select

@@ -29,7 +29,7 @@ export default async function ProductosPage({ searchParams }) {
 
   console.log("Profile:", profile);
 
-  if (profile.role !== "superadmin" && profile.role !== "manager") {
+  if (profile.role !== "super_admin" && profile.role !== "manager") {
     console.log("Invalid role, redirecting to /");
     redirect("/");
   }

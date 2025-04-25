@@ -44,16 +44,29 @@ export async function middleware(req) {
     session = data.session;
 
     if (session) {
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("role, force_password_change")
-        .eq("id", session.user.id)
-        .single();
+      // Check for cached profile in cookie
+      const cookies = req.cookies.get("profile");
+      if (cookies) {
+        try {
+          profile = JSON.parse(cookies.value);
+          console.log("Using cached profile from cookie:", profile);
+        } catch (err) {
+          console.error("Error parsing profile cookie:", err.message);
+        }
+      }
 
-      if (profileError) {
-        console.error("Middleware profile error:", profileError.message);
-      } else {
-        profile = profileData;
+      if (!profile) {
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,role,force_password_change")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profileError) {
+          console.error("Middleware profile error:", profileError.message);
+        } else {
+          profile = profileData;
+        }
       }
     }
   } catch (error) {

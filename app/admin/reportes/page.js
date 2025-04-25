@@ -25,15 +25,15 @@ export default async function ReportsPage() {
     return <div>Error al cargar el perfil</div>;
   }
 
-  // Permitir solo a superadmin y manager
-  if (profile.role !== "superadmin" && profile.role !== "manager") {
+  // Permitir solo a super_admin y manager
+  if (profile.role !== "super_admin" && profile.role !== "manager") {
     redirect("/");
   }
 
   let stores = [];
   let storeId = null;
 
-  if (profile.role === "superadmin") {
+  if (profile.role === "super_admin") {
     const { data: storesData, error: storesError } = await supabase.from("stores").select("id, name").order("name");
     if (storesError) console.error("Stores error:", storesError);
     stores = storesData || [];
@@ -80,7 +80,7 @@ export default async function ReportsPage() {
   const topProductsQuery = supabase.rpc("get_top_products", {
     limit_count: 10,
     store_filter: profile.role === "manager" ? storeId : null,
-    is_admin: profile.role === "superadmin",
+    is_admin: profile.role === "super_admin",
     start_date: firstDayOfMonth,
     end_date: lastDayOfMonth,
   });
@@ -121,7 +121,7 @@ export default async function ReportsPage() {
   const dailySalesQuery = supabase.rpc("get_daily_sales", {
     days_count: 30,
     store_filter: profile.role === "manager" ? storeId : null,
-    is_admin: profile.role === "superadmin",
+    is_admin: profile.role === "super_admin",
   });
 
   const { data: dailySales, error: dailySalesError } = await dailySalesQuery;

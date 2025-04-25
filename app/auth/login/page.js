@@ -1,20 +1,21 @@
-
+// app/auth/login/page.js
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabase";
+import { useSessionContext } from "@/lib/session-context";
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { userId, role, force_password_change, isInitialized } = useSessionContext();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isCleaned, setIsCleaned] = useState(false);
 
-  // Clear sensitive query parameters
   useEffect(() => {
     if (searchParams.get("email") || searchParams.get("password")) {
       console.log("Clearing sensitive query parameters:", searchParams.toString());
@@ -52,27 +53,45 @@ export default function LoginPage() {
         return;
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, role, force_password_change")
-        .eq("id", data.user.id)
-        .single();
+      let profile = null;
+      try {
+        // Use cached profile if available and matches user
+        if (isInitialized && userId === data.user.id && role !== null) {
+          profile = { id: userId, role, force_password_change };
+          console.log("Using cached profile from SessionContext:", profile);
+        } else {
+          const { data: profileData, error: profileError } = await supabase
+            .from("profiles")
+            .select("id,role,force_password_change")
+            .eq("id", data.user.id)
+            .single();
 
-      if (profileError) {
-        console.error("Error fetching profile:", profileError.message);
+          if (profileError) {
+            console.error("Error fetching profile:", profileError.message);
+            setError("Error al cargar el perfil");
+            setLoading(false);
+            return;
+          }
+          profile = profileData;
+        }
+      } catch (err) {
+        console.error("Unexpected profile fetch error:", err.message);
         setError("Error al cargar el perfil");
         setLoading(false);
         return;
       }
 
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({ last_login: new Date().toISOString() })
-        .eq("id", data.user.id);
-
-      if (updateError) {
-        console.error("Error updating last_login:", updateError.message);
-        // Error thrown here for user e29bf31e-228f-4a72-bd5b-d20f45c23111
+      // Update last_login (non-critical)
+      try {
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({ last_login: new Date().toISOString() })
+          .eq("id", data.user.id);
+        if (updateError) {
+          console.error("Error updating last_login:", updateError.message);
+        }
+      } catch (err) {
+        console.error("Unexpected last_login update error:", err.message);
       }
 
       console.log("Login successful, redirecting:", { userId: data.user.id, role: profile.role });

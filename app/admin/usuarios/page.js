@@ -31,7 +31,7 @@ export default async function UsuariosPage() {
     .eq("id", session.user.id)
     .single();
 
-  if (profileError || !profile || !["manager", "superadmin"].includes(profile.role)) {
+  if (profileError || !profile || !["manager", "super_admin"].includes(profile.role)) {
     return (
       <div className="py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

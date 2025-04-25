@@ -16,7 +16,7 @@ export default async function AdminLayout({ children }) {
     redirect("/auth/login?redirectedFrom=/admin");
   }
 
-  // Verificar si el usuario tiene un rol permitido (superadmin o manager)
+  // Verificar si el usuario tiene un rol permitido (super_admin o manager)
   const { data: profile, error } = await supabase
     .from("profiles")
     .select("role")
@@ -28,7 +28,7 @@ export default async function AdminLayout({ children }) {
     redirect("/auth/login"); // O maneja el error de otra forma
   }
 
-  if (profile.role !== "superadmin" && profile.role !== "manager") {
+  if (profile.role !== "super_admin" && profile.role !== "manager") {
     redirect("/");
   }
 

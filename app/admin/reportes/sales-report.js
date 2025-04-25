@@ -170,7 +170,7 @@ export default function SalesReport({ profile, stores }) {
   const [filters, setFilters] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
-    storeId: profile.role === "superadmin" ? "" : profile.store_id?.toString() || "",
+    storeId: profile.role === "super_admin" ? "" : profile.store_id?.toString() || "",
   });
   const [summary, setSummary] = useState({ totalSales: 0, totalAmount: 0, averageAmount: 0 });
 
@@ -195,7 +195,7 @@ export default function SalesReport({ profile, stores }) {
         .lte("created_at", `${filters.endDate}T23:59:59.999Z`)
         .order("created_at", { ascending: false });
 
-      if (profile.role === "superadmin") {
+      if (profile.role === "super_admin") {
         if (filters.storeId) query = query.eq("store_id", filters.storeId);
       } else if (profile.role === "manager") {
         const { data: assignedStores } = await supabase
@@ -269,7 +269,7 @@ export default function SalesReport({ profile, stores }) {
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
             />
           </div>
-          {(profile.role === "superadmin" || profile.role === "manager") && (
+          {(profile.role === "super_admin" || profile.role === "manager") && (
             <div>
               <label htmlFor="storeId" className="block text-sm font-medium text-gray-700">Tienda</label>
               <select

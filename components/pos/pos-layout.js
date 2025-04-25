@@ -189,28 +189,6 @@ export default function PosLayout({ categories, products, store: initialStore, s
         </div>
       )}
 
-      {modules.length > 0 && (
-        <div className="bg-white p-4 m-4 rounded shadow">
-          <h2 className="text-lg font-semibold">Módulos</h2>
-          <ul className="mt-2 space-y-2">
-            {modules.map((module) => (
-              <li key={module}>
-                {module === 'cart' && isDemo ? (
-                  'Cart (Read-Only)'
-                ) : (
-                  <Link
-                    href={module === 'cart' ? '/pos' : `/pos/${module}`}
-                    className="text-blue-600 hover:underline"
-                  >
-                    {module.charAt(0).toUpperCase() + module.slice(1)}
-                  </Link>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         <div className="w-full md:w-2/3 flex flex-col overflow-hidden">
           <CategoryTabs

@@ -1,3 +1,4 @@
+// components/store/store-list.js
 "use client";
 
 import { useState } from "react";
@@ -286,7 +287,7 @@ export default function StoreList({ stores, role }) {
               </div>
             )}
           </div>
-          {role === "superadmin" && (
+          {role === "super_admin" && (
             <div className="absolute top-2 right-2 flex space-x-2">
               {!store.is_active && (
                 <button
@@ -345,7 +346,7 @@ export default function StoreList({ stores, role }) {
           )}
         </div>
       ))}
-      {role === "superadmin" && (
+      {role === "super_admin" && (
         <div className="relative">
           <button
             onClick={handleAddStoreClick}

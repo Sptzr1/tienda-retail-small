@@ -202,14 +202,14 @@ export default function UserManagement({ users, stores }) {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
                           className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            user.role === "superadmin"
+                            user.role === "super_admin"
                               ? "bg-purple-100 text-purple-800"
                               : user.role === "manager"
                               ? "bg-blue-100 text-blue-800"
                               : "bg-green-100 text-green-800"
                           }`}
                         >
-                          {user.role === "superadmin" ? "Superadmin" : user.role === "manager" ? "Manager" : "Normal"}
+                          {user.role === "super_admin" ? "super_admin" : user.role === "manager" ? "Manager" : "Normal"}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -270,7 +270,7 @@ export default function UserManagement({ users, stores }) {
                   >
                     <option value="normal">Normal</option>
                     <option value="manager">Manager</option>
-                    <option value="superadmin">Superadmin</option>
+                    <option value="super_admin">super_admin</option>
                   </select>
                 </div>
 
