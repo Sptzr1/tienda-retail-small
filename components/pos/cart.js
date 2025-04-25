@@ -10,21 +10,23 @@ export default function Cart({
   updateQuantity,
   removeItem,
   clearCart,
+  completeSale,
+  ticket,
   storeId,
   profile,
   exchangeRate,
   rateError,
+  isDemo,
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
-  const [completedOrder, setCompletedOrder] = useState(null);
   const [dynamicStoreId, setDynamicStoreId] = useState("");
   const [stores, setStores] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState("");
 
-  // Fetch stores and subscribe to updates
+  // Fetch stores and subscribe to updates (for super_admin and manager)
   useEffect(() => {
     if (!profile) return;
 
@@ -60,7 +62,6 @@ export default function Cart({
 
     fetchStores();
 
-    // Subscribe to store updates
     const supabase = getSupabaseBrowser();
     const channel = supabase
       .channel("stores")
@@ -105,8 +106,146 @@ export default function Cart({
   const tax_bsd = exchangeRate ? tax_usd * exchangeRate : null;
   const total_bsd = exchangeRate ? total_usd * exchangeRate : null;
 
-  // Print ticket
+  // Format ticket for display (real or demo)
+  const formatTicket = (ticketData) => {
+    return {
+      id: ticketData.ticket_id || ticketData.id,
+      created_at: ticketData.timestamp || ticketData.created_at,
+      store: ticketData.store,
+      items: ticketData.products || ticketData.items,
+      subtotal_usd: ticketData.subtotal_usd || subtotal_usd,
+      tax_usd: ticketData.tax_usd || tax_usd,
+      total_usd: ticketData.total_usd || total_usd,
+      subtotal_bsd: ticketData.subtotal_bsd || subtotal_bsd,
+      tax_bsd: ticketData.tax_bsd || tax_bsd,
+      total_bsd: ticketData.total_bsd || total_bsd,
+      payment_method: ticketData.payment_method || paymentMethod,
+    };
+  };
+
+  // Handle checkout
+  const handleCheckout = async () => {
+    if (items.length === 0) {
+      alert("El carrito está vacío. Agrega productos para continuar.");
+      return;
+    }
+
+    if (!exchangeRate) {
+      alert("Error: Tasa de cambio no disponible. Por favor, contacta al administrador.");
+      return;
+    }
+
+    if (!paymentMethod) {
+      alert("Error: Selecciona un método de pago.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (isDemo) {
+        // For demo users, use completeSale from pos-layout.js
+        await completeSale();
+        setShowReceipt(true);
+      } else {
+        // Normal checkout process
+        const finalStoreId = profile.role === "normal" ? storeId : dynamicStoreId;
+
+        if (!finalStoreId || isNaN(finalStoreId)) {
+          throw new Error("ID de tienda inválido. Por favor, selecciona una tienda.");
+        }
+
+        const supabase = getSupabaseBrowser();
+
+        // Fetch latest store name
+        const { data: storeData, error: storeError } = await supabase
+          .from("stores")
+          .select("id, name")
+          .eq("id", Number(finalStoreId))
+          .single();
+
+        if (storeError || !storeData) {
+          throw new Error(storeError?.message || "Tienda no encontrada");
+        }
+
+        const saleData = {
+          store_id: Number(finalStoreId),
+          total_amount: total_usd,
+          tax_amount: tax_usd,
+          status: "completed",
+          items_count: items.reduce((sum, item) => sum + item.quantity, 0),
+          created_by: profile.id,
+        };
+
+        const { data: sale, error: saleError } = await supabase
+          .from("sales")
+          .insert([saleData])
+          .select()
+          .single();
+
+        if (saleError) throw saleError;
+
+        const saleItems = items.map((item) => ({
+          sale_id: sale.id,
+          product_id: item.id,
+          quantity: item.quantity,
+          price: item.price,
+          subtotal: (item.price * item.quantity) / (1 + taxRate),
+        }));
+
+        const { error: itemsError } = await supabase.from("sale_items").insert(saleItems);
+
+        if (itemsError) throw itemsError;
+
+        // Insert payment method
+        const { error: paymentError } = await supabase
+          .from("payment_methods")
+          .insert([{ sale_id: sale.id, method: paymentMethod }]);
+
+        if (paymentError) throw paymentError;
+
+        for (const item of items) {
+          const { error: stockError } = await supabase
+            .from("products")
+            .update({ stock: item.stock - item.quantity })
+            .eq("id", item.id);
+
+          if (stockError) throw stockError;
+        }
+
+        const order = {
+          ...sale,
+          items: itemsWithCalculations,
+          subtotal_usd,
+          tax_usd,
+          total_usd,
+          subtotal_bsd,
+          tax_bsd,
+          total_bsd,
+          store: {
+            id: Number(finalStoreId),
+            name: storeData.name,
+          },
+          payment_method: paymentMethod,
+        };
+
+        setShowReceipt(true);
+      }
+    } catch (error) {
+      console.error("Error processing checkout:", error);
+      alert("Error al procesar la venta: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Print ticket (disabled for demo users)
   const printTicket = async (order) => {
+    if (isDemo) {
+      alert("La impresión está deshabilitada en modo demo.");
+      return;
+    }
+
     try {
       const response = await fetch("/api/print-ticket", {
         method: "POST",
@@ -140,135 +279,16 @@ export default function Cart({
     }
   };
 
-  const handleCheckout = async () => {
-    if (items.length === 0) return;
-
-    if (!profile) {
-      alert("Error: Perfil de usuario no cargado. Por favor, intenta de nuevo.");
-      return;
-    }
-
-    const finalStoreId = profile.role === "normal" ? storeId : dynamicStoreId;
-
-    if (!finalStoreId || isNaN(finalStoreId)) {
-      console.error("finalStoreId is invalid:", finalStoreId);
-      alert("Error: ID de tienda inválido. Por favor, selecciona una tienda.");
-      return;
-    }
-
-    if (!exchangeRate) {
-      alert("Error: Tasa de cambio no disponible. Por favor, contacta al administrador.");
-      return;
-    }
-
-    if (!paymentMethod) {
-      alert("Error: Selecciona un método de pago.");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const supabase = getSupabaseBrowser();
-
-      // Fetch latest store name
-      const { data: storeData, error: storeError } = await supabase
-        .from("stores")
-        .select("id, name")
-        .eq("id", Number(finalStoreId))
-        .single();
-
-      if (storeError || !storeData) {
-        throw new Error(storeError?.message || "Tienda no encontrada");
-      }
-
-      const saleData = {
-        store_id: Number(finalStoreId),
-        total_amount: total_usd,
-        tax_amount: tax_usd,
-        status: "completed",
-        items_count: items.reduce((sum, item) => sum + item.quantity, 0),
-        created_by: profile.id,
-      };
-
-      const { data: sale, error: saleError } = await supabase
-        .from("sales")
-        .insert([saleData])
-        .select()
-        .single();
-
-      if (saleError) throw saleError;
-
-      const saleItems = items.map((item) => ({
-        sale_id: sale.id,
-        product_id: item.id,
-        quantity: item.quantity,
-        price: item.price,
-        subtotal: (item.price * item.quantity) / (1 + taxRate),
-      }));
-
-      const { error: itemsError } = await supabase.from("sale_items").insert(saleItems);
-
-      if (itemsError) throw itemsError;
-
-      // Insert payment method
-      const { error: paymentError } = await supabase
-        .from("payment_methods")
-        .insert([{ sale_id: sale.id, method: paymentMethod }]);
-
-      if (paymentError) throw paymentError;
-
-      for (const item of items) {
-        const { error: stockError } = await supabase
-          .from("products")
-          .update({ stock: item.stock - item.quantity })
-          .eq("id", item.id);
-
-        if (stockError) throw stockError;
-      }
-
-      const order = {
-        ...sale,
-        items: itemsWithCalculations,
-        subtotal_usd,
-        tax_usd,
-        total_usd,
-        subtotal_bsd,
-        tax_bsd,
-        total_bsd,
-        store: {
-          id: Number(finalStoreId),
-          name: storeData.name,
-        },
-        payment_method: paymentMethod,
-      };
-
-      setCompletedOrder(order);
-      setShowReceipt(true);
-      setPaymentMethod("");
-      clearCart();
-      router.refresh();
-    } catch (error) {
-      console.error("Error processing checkout:", error);
-      alert("Error al procesar la venta: " + error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePrint = () => {
-    if (!completedOrder || !exchangeRate) return;
-    printTicket(completedOrder);
-  };
-
   const handleShowPrintModal = () => {
     setShowPrintModal(true);
   };
 
   const handleCloseReceipt = () => {
     setShowReceipt(false);
-    setCompletedOrder(null);
     setShowPrintModal(false);
+    if (isDemo) {
+      clearCart(); // Clear cart for demo users to reset ticket
+    }
   };
 
   const formatCurrency = (amount, currency = "USD") => {
@@ -285,15 +305,31 @@ export default function Cart({
     }).format(amount);
   };
 
-  if (showReceipt && completedOrder && exchangeRate) {
+  // Show receipt for both real and demo tickets
+  if ((showReceipt || ticket) && exchangeRate) {
+    const displayTicket = ticket ? formatTicket(ticket) : {
+      id: "N/A",
+      created_at: new Date().toISOString(),
+      store: stores.find((s) => s.id == storeId) || { id: storeId, name: "Tienda" },
+      items: itemsWithCalculations,
+      subtotal_usd,
+      tax_usd,
+      total_usd,
+      subtotal_bsd,
+      tax_bsd,
+      total_bsd,
+      payment_method: paymentMethod,
+    };
+
     return (
       <div className="flex flex-col h-full">
         <div className="p-4 border-b flex justify-between items-center">
-          <h2 className="text-lg font-semibold">Recibo</h2>
+          <h2 className="text-lg font-semibold">Recibo {isDemo && "(Demo)"}</h2>
           <div className="flex space-x-2">
             <button
               onClick={handleShowPrintModal}
               className="p-2 text-gray-600 hover:text-gray-900"
+              disabled={isDemo}
             >
               <Printer className="h-5 w-5" />
             </button>
@@ -310,10 +346,10 @@ export default function Cart({
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
               <div className="text-center mb-4">
-                <h3 className="text-xl font-bold">{completedOrder.store.name}</h3>
-                <p className="text-gray-500 text-sm">Recibo de Venta</p>
-                <p className="text-gray-500 text-sm">{new Date(completedOrder.created_at).toLocaleString()}</p>
-                <p className="text-gray-500 text-sm">Orden #{completedOrder.id}</p>
+                <h3 className="text-xl font-bold">{displayTicket.store.name}</h3>
+                <p className="text-gray-500 text-sm">Recibo de Venta {isDemo && "(Demo)"}</p>
+                <p className="text-gray-500 text-sm">{new Date(displayTicket.created_at).toLocaleString()}</p>
+                <p className="text-gray-500 text-sm">Orden #{displayTicket.id}</p>
               </div>
 
               <div className="border-t border-b py-2 my-4">
@@ -326,11 +362,13 @@ export default function Cart({
                     </tr>
                   </thead>
                   <tbody>
-                    {completedOrder.items.map((item) => (
-                      <tr key={item.id} className="border-b border-gray-100">
+                    {displayTicket.items.map((item, index) => (
+                      <tr key={item.id || index} className="border-b border-gray-100">
                         <td className="py-1">{item.quantity} x {item.name}</td>
                         <td className="text-center py-1">{item.quantity}</td>
-                        <td className="text-right py-1">{formatCurrency(item.total_bsd, "VES")}</td>
+                        <td className="text-right py-1">
+                          {formatCurrency(item.total_bsd || item.price * item.quantity * exchangeRate, "VES")}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -340,30 +378,34 @@ export default function Cart({
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
+                  <span>{formatCurrency(displayTicket.subtotal_bsd, "VES")}</span>
                 </div>
                 {/* <div className="flex justify-between">
                   <span>IVA (16%):</span>
-                  <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
+                  <span>{formatCurrency(displayTicket.tax_bsd, "VES")}</span>
                 </div> */}
                 <div className="flex justify-between font-bold text-base">
                   <span>Total:</span>
-                  <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
+                  <span>{formatCurrency(displayTicket.total_bsd, "VES")}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Método de pago:</span>
-                  <span>{completedOrder.payment_method}</span>
+                  <span>{displayTicket.payment_method}</span>
                 </div>
               </div>
 
               <div className="mt-4 text-center text-gray-500 text-xs">
                 <p>¡Gracias por su compra!</p>
+                {isDemo && (
+                  <p className="text-blue-500 mt-2">Este es un ticket simulado. No se ha guardado en la base de datos.</p>
+                )}
               </div>
 
               <div className="mt-6 flex justify-between">
                 <button
-                  onClick={handlePrint}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                  onClick={() => printTicket(displayTicket)}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                  disabled={isDemo}
                 >
                   Imprimir
                 </button>
@@ -381,10 +423,10 @@ export default function Cart({
         <div className="flex-1 overflow-auto p-4">
           <div className="max-w-md mx-auto bg-white p-6 border rounded-lg">
             <div className="text-center mb-6">
-              <h3 className="text-xl font-bold">{completedOrder.store.name}</h3>
-              <p className="text-gray-500 text-sm">Recibo de Venta</p>
-              <p className="text-gray-500 text-sm">{new Date(completedOrder.created_at).toLocaleString()}</p>
-              <p className="text-gray-500 text-sm">Orden #{completedOrder.id}</p>
+              <h3 className="text-xl font-bold">{displayTicket.store.name}</h3>
+              <p className="text-gray-500 text-sm">Recibo de Venta {isDemo && "(Demo)"}</p>
+              <p className="text-gray-500 text-sm">{new Date(displayTicket.created_at).toLocaleString()}</p>
+              <p className="text-gray-500 text-sm">Orden #{displayTicket.id}</p>
             </div>
 
             <div className="border-t border-b py-4 my-4">
@@ -397,11 +439,13 @@ export default function Cart({
                   </tr>
                 </thead>
                 <tbody>
-                  {completedOrder.items.map((item) => (
-                    <tr key={item.id} className="border-b border-gray-100">
+                  {displayTicket.items.map((item, index) => (
+                    <tr key={item.id || index} className="border-b border-gray-100">
                       <td className="py-2">{item.name}</td>
                       <td className="text-center py-2">{item.quantity}</td>
-                      <td className="text-right py-2">{formatCurrency(item.total_bsd, "VES")}</td>
+                      <td className="text-right py-2">
+                        {formatCurrency(item.total_bsd || item.price * item.quantity * exchangeRate, "VES")}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -411,24 +455,27 @@ export default function Cart({
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span>{formatCurrency(completedOrder.subtotal_bsd, "VES")}</span>
+                <span>{formatCurrency(displayTicket.subtotal_bsd, "VES")}</span>
               </div>
               {/* <div className="flex justify-between">
                 <span>IVA (16%):</span>
-                <span>{formatCurrency(completedOrder.tax_bsd, "VES")}</span>
+                <span>{formatCurrency(displayTicket.tax_bsd, "VES")}</span>
               </div> */}
               <div className="flex justify-between font-bold text-base">
                 <span>Total:</span>
-                <span>{formatCurrency(completedOrder.total_bsd, "VES")}</span>
+                <span>{formatCurrency(displayTicket.total_bsd, "VES")}</span>
               </div>
               <div className="flex justify-between">
                 <span>Método de pago:</span>
-                <span>{completedOrder.payment_method}</span>
+                <span>{displayTicket.payment_method}</span>
               </div>
             </div>
 
             <div className="mt-8 text-center text-gray-500 text-xs">
               <p>¡Gracias por su compra!</p>
+              {isDemo && (
+                <p className="text-blue-500 mt-2">Este es un ticket simulado. No se ha guardado en la base de datos.</p>
+              )}
             </div>
           </div>
         </div>
@@ -439,7 +486,7 @@ export default function Cart({
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b">
-        <h2 className="text-lg font-semibold">Carrito de compra</h2>
+        <h2 className="text-lg font-semibold">Carrito de compra {isDemo && "(Demo)"}</h2>
       </div>
 
       {(profile && (profile.role === "super_admin" || profile.role === "manager")) && (
@@ -450,6 +497,7 @@ export default function Cart({
             value={dynamicStoreId}
             onChange={(e) => setDynamicStoreId(e.target.value)}
             className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            disabled={isDemo} // Disable store selection for demo users
           >
             <option value="">Selecciona una tienda</option>
             {stores.map((store) => (
@@ -492,7 +540,7 @@ export default function Cart({
                   <button
                     onClick={() => updateQuantity(item.id, item.quantity + 1)}
                     className="p-1 rounded-full hover:bg-gray-100"
-                    disabled={item.quantity >= item.stock}
+                    disabled={item.quantity >= (item.stock || Infinity)}
                   >
                     <Plus className="h-4 w-4" />
                   </button>

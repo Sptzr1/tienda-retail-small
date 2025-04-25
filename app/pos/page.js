@@ -1,7 +1,7 @@
-// app/pos/page.js
 import PosLayout from "@/components/pos/pos-layout";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,7 @@ export default async function PosPage({ searchParams }) {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, role, store_id")
+    .select("id, full_name, role, store_id, demo_view_privilege")
     .eq("id", session.user.id)
     .single();
 
@@ -38,12 +38,19 @@ export default async function PosPage({ searchParams }) {
       .from("manager_stores")
       .select("store_id, stores!manager_stores_store_id_fkey(id, name)")
       .eq("user_id", profile.id);
-
     stores = assignedStores?.map((s) => s.stores) || [];
     selectedStoreId = selectedStoreId && stores.some((s) => s.id === selectedStoreId) ? selectedStoreId : stores[0]?.id;
   } else if (profile.role === "demo") {
-    const { data: allStores } = await supabase.from("stores").select("id, name").order("id");
-    stores = allStores || [];
+    if (profile.demo_view_privilege === "super_admin") {
+      const { data: allStores } = await supabase.from("stores").select("id, name").order("id");
+      stores = allStores || [];
+    } else if (profile.demo_view_privilege === "manager") {
+      const { data: assignedStores } = await supabase
+        .from("manager_stores")
+        .select("store_id, stores!manager_stores_store_id_fkey(id, name)")
+        .eq("user_id", profile.id);
+      stores = assignedStores?.map((s) => s.stores) || [];
+    }
     selectedStoreId = selectedStoreId && stores.some((s) => s.id === selectedStoreId) ? selectedStoreId : stores[0]?.id;
   } else if (profile.role === "normal" && profile.store_id) {
     const { data: store } = await supabase.from("stores").select("id, name").eq("id", profile.store_id).single();
@@ -72,10 +79,10 @@ export default async function PosPage({ searchParams }) {
   const { data: selectedStore } = await supabase.from("stores").select("*").eq("id", selectedStoreId).single();
 
   const modules = {
-    super_admin: ['admin', 'products', 'stores', 'users', 'cart'],
-    manager: ['products', 'cart'],
-    normal: ['cart'],
-    demo: ['cart']
+    super_admin: ["admin", "products", "stores", "users", "cart"],
+    manager: ["products", "cart"],
+    normal: ["cart"],
+    demo: ["cart"]
   }[profile.role] || [];
 
   return (
@@ -86,6 +93,7 @@ export default async function PosPage({ searchParams }) {
       stores={stores}
       user={profile}
       modules={modules}
+      isDemo={profile.role === "demo"}
     />
   );
 }

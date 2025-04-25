@@ -1,4 +1,3 @@
-// components/pos/pos-layout.js
 "use client";
 
 import { useState, useEffect } from "react";
@@ -10,17 +9,16 @@ import { Home, LogOut } from "lucide-react";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function PosLayout({ categories, products, store: initialStore, stores, user, modules }) {
+export default function PosLayout({ categories, products, store: initialStore, stores, user, modules, isDemo }) {
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [filteredProducts, setFilteredProducts] = useState(products);
   const [cart, setCart] = useState([]);
+  const [ticket, setTicket] = useState(null);
   const [exchangeRate, setExchangeRate] = useState(null);
   const [rateError, setRateError] = useState(null);
   const [store, setStore] = useState(initialStore);
   const [demoMessage, setDemoMessage] = useState(null);
-
-  const isDemo = user.role === "demo";
 
   useEffect(() => {
     let intervalId;
@@ -74,51 +72,154 @@ export default function PosLayout({ categories, products, store: initialStore, s
   }, [selectedCategory, products]);
 
   const addToCart = (product) => {
-    if (isDemo) {
-      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
-      return;
-    }
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.id === product.id);
-
       if (existingItem) {
         return prevCart.map((item) =>
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
-      } else {
-        return [...prevCart, { ...product, quantity: 1 }];
       }
+      return [...prevCart, { ...product, quantity: 1 }];
     });
+    if (isDemo) {
+      setDemoMessage("Producto añadido al carrito en modo demo. La venta no se guardará en la base de datos.");
+      setTimeout(() => setDemoMessage(null), 3000); // Clear message after 3 seconds
+    }
   };
 
   const updateQuantity = (productId, quantity) => {
-    if (isDemo) {
-      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
-      return;
-    }
     setCart((prevCart) => {
       if (quantity <= 0) {
         return prevCart.filter((item) => item.id !== productId);
       }
-
       return prevCart.map((item) => (item.id === productId ? { ...item, quantity } : item));
     });
+    if (isDemo) {
+      setDemoMessage("Cantidad actualizada en modo demo. La venta no se guardará en la base de datos.");
+      setTimeout(() => setDemoMessage(null), 3000);
+    }
   };
 
   const removeItem = (productId) => {
-    if (isDemo) {
-      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
-      return;
-    }
     setCart((prevCart) => prevCart.filter((item) => item.id !== productId));
+    if (isDemo) {
+      setDemoMessage("Producto eliminado del carrito en modo demo.");
+      setTimeout(() => setDemoMessage(null), 3000);
+    }
   };
 
   const clearCart = () => {
+    setCart([]);
+    setTicket(null);
     if (isDemo) {
-      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
+      setDemoMessage("Carrito limpiado en modo demo.");
+      setTimeout(() => setDemoMessage(null), 3000);
+    }
+  };
+
+  const completeSale = async () => {
+    if (isDemo) {
+      // Generate dummy ticket for demo users
+      const taxRate = 0.16;
+      const dummyProducts = cart.length > 0
+        ? cart.map((item) => {
+            const total_usd = item.price * item.quantity;
+            const subtotal_usd = total_usd / (1 + taxRate);
+            const tax_usd = total_usd - subtotal_usd;
+            return {
+              id: item.id,
+              name: item.name,
+              price: item.price,
+              quantity: item.quantity,
+              total_usd,
+              subtotal_usd,
+              tax_usd,
+              total_bsd: exchangeRate ? total_usd * exchangeRate : null,
+              subtotal_bsd: exchangeRate ? subtotal_usd * exchangeRate : null,
+              tax_bsd: exchangeRate ? tax_usd * exchangeRate : null,
+            };
+          })
+        : [{
+            id: "generic",
+            name: "Producto Genérico",
+            price: 10.00,
+            quantity: 1,
+            total_usd: 10.00,
+            subtotal_usd: 10.00 / (1 + taxRate),
+            tax_usd: 10.00 - (10.00 / (1 + taxRate)),
+            total_bsd: exchangeRate ? 10.00 * exchangeRate : null,
+            subtotal_bsd: exchangeRate ? (10.00 / (1 + taxRate)) * exchangeRate : null,
+            tax_bsd: exchangeRate ? (10.00 - (10.00 / (1 + taxRate))) * exchangeRate : null,
+          }];
+
+      const subtotal_usd = dummyProducts.reduce((sum, item) => sum + item.subtotal_usd, 0);
+      const tax_usd = dummyProducts.reduce((sum, item) => sum + item.tax_usd, 0);
+      const total_usd = dummyProducts.reduce((sum, item) => sum + item.total_usd, 0);
+      const subtotal_bsd = exchangeRate ? subtotal_usd * exchangeRate : null;
+      const tax_bsd = exchangeRate ? tax_usd * exchangeRate : null;
+      const total_bsd = exchangeRate ? total_usd * exchangeRate : null;
+
+      const dummyTicket = {
+        ticket_id: `DEMO-${Date.now()}`,
+        store: { id: store.id, name: store.name },
+        products: dummyProducts,
+        subtotal_usd,
+        tax_usd,
+        total_usd,
+        subtotal_bsd,
+        tax_bsd,
+        total_bsd,
+        timestamp: new Date().toISOString(),
+      };
+
+      setTicket(dummyTicket);
+      setCart([]); // Clear cart
+      setDemoMessage("Venta simulada completada. Ticket generado en modo demo.");
+      setTimeout(() => setDemoMessage(null), 5000);
       return;
     }
-    setCart([]);
+
+    // Normal sale process (blocked by RLS for demo users)
+    try {
+      const supabase = getSupabaseBrowser();
+      const { data: sale, error } = await supabase
+        .from("sales")
+        .insert({
+          store_id: store.id,
+          user_id: user.id,
+          total_amount: cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+          tax_amount: cart.reduce((sum, item) => sum + ((item.price * item.quantity) - ((item.price * item.quantity) / (1 + 0.16))), 0),
+          items: cart.map((item) => ({
+            product_id: item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const ticketData = {
+        ticket_id: sale.id,
+        store: { id: store.id, name: store.name },
+        products: sale.items,
+        subtotal_usd: sale.items.reduce((sum, item) => sum + ((item.price * item.quantity) / (1 + 0.16)), 0),
+        tax_usd: sale.items.reduce((sum, item) => sum + ((item.price * item.quantity) - ((item.price * item.quantity) / (1 + 0.16))), 0),
+        total_usd: sale.items.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+        subtotal_bsd: exchangeRate ? sale.items.reduce((sum, item) => sum + ((item.price * item.quantity) / (1 + 0.16)), 0) * exchangeRate : null,
+        tax_bsd: exchangeRate ? sale.items.reduce((sum, item) => sum + ((item.price * item.quantity) - ((item.price * item.quantity) / (1 + 0.16))), 0) * exchangeRate : null,
+        total_bsd: exchangeRate ? sale.items.reduce((sum, item) => sum + (item.price * item.quantity), 0) * exchangeRate : null,
+        timestamp: sale.created_at,
+      };
+
+      setTicket(ticketData);
+      setCart([]);
+    } catch (error) {
+      console.error("Error completing sale:", error);
+      setDemoMessage("Error al completar la venta. Contacta al administrador.");
+    }
   };
 
   const handleLogout = async () => {
@@ -133,7 +234,7 @@ export default function PosLayout({ categories, products, store: initialStore, s
   };
 
   const handleStoreChange = (storeId) => {
-    router.push(`/?store=${storeId}`);
+    router.push(`/pos?store=${storeId}`);
   };
 
   return (
@@ -178,7 +279,7 @@ export default function PosLayout({ categories, products, store: initialStore, s
       </header>
 
       {demoMessage && (
-        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 m-4 rounded">
+        <div className="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 m-4 rounded">
           <p>{demoMessage}</p>
           <button
             onClick={() => setDemoMessage(null)}
@@ -213,10 +314,13 @@ export default function PosLayout({ categories, products, store: initialStore, s
             updateQuantity={updateQuantity}
             removeItem={removeItem}
             clearCart={clearCart}
+            completeSale={completeSale}
+            ticket={ticket}
             storeId={store.id}
             profile={user}
             exchangeRate={exchangeRate}
             rateError={rateError}
+            isDemo={isDemo}
           />
         </div>
       </div>

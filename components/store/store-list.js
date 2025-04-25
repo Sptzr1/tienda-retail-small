@@ -314,7 +314,7 @@ export default function StoreList({ stores, role }) {
               </button>
             </div>
           )}
-          {editingStore === store.id && (
+          {editingStore === store.id && role !== "demo" && (
             <div className="absolute inset-0 bg-white bg-opacity-95 p-6 flex flex-col justify-center rounded-lg shadow-lg">
               <label htmlFor="edit-name" className="text-sm font-medium text-gray-700 mb-1">
                 Nombre de la tienda
@@ -363,7 +363,7 @@ export default function StoreList({ stores, role }) {
               </div>
             </div>
           </button>
-          {addingStore && (
+          {addingStore && role !== "demo" && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
               <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Nueva Tienda</h3>
@@ -415,7 +415,7 @@ export default function StoreList({ stores, role }) {
           )}
         </div>
       )}
-      {deletingStore && (
+      {deletingStore && role !== "demo" && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
             {deletingStore.hasProducts && deletingStore.is_active ? (
@@ -430,7 +430,7 @@ export default function StoreList({ stores, role }) {
                 <div className="flex justify-end space-x-2">
                   <button
                     onClick={handleCancelDelete}
-                    className="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 text-gray-700"
+                    className="px-4 py-4 bg-gray-200 rounded-md hover:bg-gray-300 text-gray-700"
                   >
                     Cancelar
                   </button>

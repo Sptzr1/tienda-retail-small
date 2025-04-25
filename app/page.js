@@ -9,7 +9,6 @@ import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 export const dynamic = "force-dynamic";
 
 async function fetchProfileAndStores(supabase, userId) {
-  // Check cached profile
   const cookieStore = await cookies();
   let profile = null;
   const cachedProfile = cookieStore.get("profile")?.value;
@@ -25,7 +24,7 @@ async function fetchProfileAndStores(supabase, userId) {
   if (!profile) {
     const { data: profileData, error: profileError } = await supabase
       .from("profiles")
-      .select("id, full_name, role, store_id")
+      .select("id, full_name, role, store_id, demo_view_privilege")
       .eq("id", userId)
       .single();
 
@@ -37,17 +36,17 @@ async function fetchProfileAndStores(supabase, userId) {
   }
 
   let stores = [];
-  if (profile?.role === "super_admin") {
+  if (profile?.role === "super_admin" || (profile?.role === "demo" && profile?.demo_view_privilege === "super_admin")) {
     const { data: storesData, error: storesError } = await supabase
       .from("stores")
       .select("id, name, address, is_active, disabled_at")
       .order("name");
     if (storesError) {
-      console.error("Error fetching super_admin stores:", storesError.message);
+      console.error("Error fetching stores:", storesError.message);
     } else {
       stores = storesData || [];
     }
-  } else if (profile?.role === "manager") {
+  } else if (profile?.role === "manager" || (profile?.role === "demo" && profile?.demo_view_privilege === "manager")) {
     const { data: assignedStoresData, error: assignedError } = await supabase
       .from("manager_stores")
       .select("stores!manager_stores_store_id_fkey(id, name, address, is_active, disabled_at)")
@@ -131,6 +130,10 @@ export default async function Home() {
                     ? "Tienes acceso de administrador a todas las tiendas"
                     : profile?.role === "manager"
                     ? `Gestionas ${stores.length} tienda${stores.length > 1 ? "s" : ""}`
+                    : profile?.role === "demo" && profile?.demo_view_privilege === "super_admin"
+                    ? "Vista demo de administrador (todas las tiendas)"
+                    : profile?.role === "demo" && profile?.demo_view_privilege === "manager"
+                    ? `Vista demo de gerente (${stores.length} tienda${stores.length > 1 ? "s" : ""})`
                     : profile?.store_id
                     ? `Estás asignado a: ${stores[0]?.name || "Tienda desconocida"}`
                     : "No tienes una tienda asignada aún"}
@@ -140,8 +143,27 @@ export default async function Home() {
               <StoreList stores={stores} role={profile?.role} />
 
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mt-6">
+                {profile?.role === "normal" && profile?.store_id && (
+                  <Link
+                    href="/cart"
+                    className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                  >
+                    <div className="flex items-center">
+                      <div className="p-3 rounded-full bg-blue-100 text-blue-600">
+                        <ShoppingCart className="h-8 w-8" />
+                      </div>
+                      <div className="ml-4">
+                        <h2 className="text-xl font-semibold">Carrito de Compras</h2>
+                        <p className="mt-1 text-gray-600">Realiza ventas y gestiona pedidos</p>
+                      </div>
+                    </div>
+                  </Link>
+                )}
 
-                {(profile?.role === "super_admin" || profile?.role === "manager") && (
+                {(profile?.role === "super_admin" ||
+                  profile?.role === "manager" ||
+                  (profile?.role === "demo" && profile?.demo_view_privilege === "super_admin") ||
+                  (profile?.role === "demo" && profile?.demo_view_privilege === "manager")) && (
                   <>
                     <Link
                       href="/admin/productos"
@@ -153,7 +175,9 @@ export default async function Home() {
                         </div>
                         <div className="ml-4">
                           <h2 className="text-xl font-semibold">Inventario</h2>
-                          <p className="mt-1 text-gray-600">Administrar productos y categorías</p>
+                          <p className="mt-1 text-gray-600">
+                            {profile?.role === "demo" ? "Ver productos y categorías" : "Administrar productos y categorías"}
+                          </p>
                         </div>
                       </div>
                     </Link>
@@ -168,7 +192,9 @@ export default async function Home() {
                         </div>
                         <div className="ml-4">
                           <h2 className="text-xl font-semibold">Reportes</h2>
-                          <p className="mt-1 text-gray-600">Visualiza informes de ventas, inventario y rendimiento</p>
+                          <p className="mt-1 text-gray-600">
+                            Visualiza informes de ventas, inventario y rendimiento
+                          </p>
                         </div>
                       </div>
                     </Link>

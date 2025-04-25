@@ -1,3 +1,4 @@
+// components/user-management.js
 "use client";
 
 import { useState } from "react";
@@ -16,21 +17,32 @@ export default function UserManagement({ users, stores }) {
     try {
       const supabase = getSupabaseBrowser();
 
+      // Prepare profile updates
+      const profileUpdates = {
+        role: updates.role,
+        store_id: updates.role === "normal" ? updates.store_id : null,
+        force_password_change: updates.role === "demo" ? false : updates.force_password_change,
+        demo_view_privilege: updates.role === "demo" ? updates.demo_view_privilege : null,
+      };
+
       // Update profiles
       const { error: profileError } = await supabase
         .from("profiles")
-        .update({
-          role: updates.role,
-          store_id: updates.role === "normal" ? updates.store_id : null,
-          force_password_change: updates.force_password_change,
-        })
+        .update(profileUpdates)
         .eq("id", userId);
 
       if (profileError) throw new Error(`Profile update failed: ${profileError.message}`);
 
-      // Update manager_stores for manager role
-      if (updates.role === "manager") {
-        // Fetch current manager_stores
+      // Set fixed password for demo users
+      if (updates.role === "demo" && updates.demo_password) {
+        const { error: passwordError } = await supabase.auth.admin.updateUserById(userId, {
+          password: updates.demo_password,
+        });
+        if (passwordError) throw new Error(`Failed to set demo password: ${passwordError.message}`);
+      }
+
+      // Update manager_stores for manager or demo (manager privilege) roles
+      if (updates.role === "manager" || (updates.role === "demo" && updates.demo_view_privilege === "manager")) {
         const { data: currentStores, error: fetchError } = await supabase
           .from("manager_stores")
           .select("store_id")
@@ -43,19 +55,16 @@ export default function UserManagement({ users, stores }) {
           .map((id) => Number.parseInt(id))
           .filter((id) => stores.some((s) => s.id === id));
 
-        // Validate no duplicates
         const uniqueStoreIds = [...new Set(desiredStoreIds)];
         if (uniqueStoreIds.length !== desiredStoreIds.length) {
           throw new Error("Se detectaron tiendas duplicadas");
         }
 
-        // Compute stores to add and remove
         const toAdd = uniqueStoreIds.filter((id) => !currentStoreIds.includes(id));
         const toRemove = currentStoreIds.filter((id) => !uniqueStoreIds.includes(id));
 
         console.log("manager_stores update:", { currentStoreIds, desiredStoreIds, toAdd, toRemove });
 
-        // Insert new assignments
         if (toAdd.length > 0) {
           const managerStoresData = toAdd.map((storeId) => ({
             user_id: userId,
@@ -68,7 +77,6 @@ export default function UserManagement({ users, stores }) {
           if (insertError) throw new Error(`Failed to insert manager_stores: ${insertError.message}`);
         }
 
-        // Remove deselected assignments
         if (toRemove.length > 0) {
           console.log("Removing manager_stores:", toRemove);
           const { error: deleteError } = await supabase
@@ -79,7 +87,6 @@ export default function UserManagement({ users, stores }) {
           if (deleteError) throw new Error(`Failed to delete manager_stores: ${deleteError.message}`);
         }
       } else {
-        // Clear manager_stores for non-managers
         const { error: deleteError } = await supabase
           .from("manager_stores")
           .delete()
@@ -119,7 +126,6 @@ export default function UserManagement({ users, stores }) {
   const handleEditUser = async (user) => {
     const supabase = getSupabaseBrowser();
     try {
-      // Fetch current manager_stores for the user
       const { data: managerStores, error: fetchError } = await supabase
         .from("manager_stores")
         .select("store_id")
@@ -127,15 +133,20 @@ export default function UserManagement({ users, stores }) {
 
       if (fetchError) throw new Error(`Failed to fetch manager_stores: ${fetchError.message}`);
 
-      // Initialize selectedUser with current manager_stores
       setSelectedUser({
         ...user,
-        manager_stores: managerStores.map((s) => s.store_id.toString()), // Store as strings for UI
+        manager_stores: managerStores.map((s) => s.store_id.toString()),
+        demo_password: user.role === "demo" ? "" : null,
+        demo_view_privilege: user.demo_view_privilege || "super_admin",
       });
     } catch (error) {
       console.error("Error loading user data:", error);
       alert("Error al cargar datos del usuario: " + error.message);
-      setSelectedUser(user); // Fallback to user prop
+      setSelectedUser({
+        ...user,
+        demo_password: user.role === "demo" ? "" : null,
+        demo_view_privilege: user.role === "demo" ? "super_admin" : null,
+      });
     }
   };
 
@@ -147,31 +158,19 @@ export default function UserManagement({ users, stores }) {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Usuario
                   </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Rol
                   </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Tienda(s)
                   </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Último acceso
                   </th>
-                  <th scope="col" className="relative px-6 py-3">
+                  <th className="relative px-6 py-3">
                     <span className="sr-only">Acciones</span>
                   </th>
                 </tr>
@@ -206,17 +205,27 @@ export default function UserManagement({ users, stores }) {
                               ? "bg-purple-100 text-purple-800"
                               : user.role === "manager"
                               ? "bg-blue-100 text-blue-800"
+                              : user.role === "demo"
+                              ? "bg-yellow-100 text-yellow-800"
                               : "bg-green-100 text-green-800"
                           }`}
                         >
-                          {user.role === "super_admin" ? "super_admin" : user.role === "manager" ? "Manager" : "Normal"}
+                          {user.role === "super_admin"
+                            ? "super_admin"
+                            : user.role === "manager"
+                            ? "Manager"
+                            : user.role === "demo"
+                            ? "Demo"
+                            : "Normal"}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {user.role === "normal" && user.store
                           ? user.store.name
-                          : user.role === "manager" && user.stores?.length > 0
+                          : (user.role === "manager" || (user.role === "demo" && user.demo_view_privilege === "manager")) && user.stores?.length > 0
                           ? user.stores.map((s) => s.name).join(", ")
+                          : user.role === "demo" && user.demo_view_privilege === "super_admin"
+                          ? "Todas las tiendas"
                           : "Sin asignar"}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -259,20 +268,65 @@ export default function UserManagement({ users, stores }) {
                     className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                     value={selectedUser.role || "normal"}
                     onChange={(e) => {
+                      const newRole = e.target.value;
                       setSelectedUser({
                         ...selectedUser,
-                        role: e.target.value,
-                        store_id: e.target.value !== "normal" ? null : selectedUser.store_id,
+                        role: newRole,
+                        store_id: newRole !== "normal" ? null : selectedUser.store_id,
                         manager_stores:
-                          e.target.value === "manager" ? selectedUser.manager_stores || [] : [],
+                          newRole === "manager" || (newRole === "demo" && selectedUser.demo_view_privilege === "manager")
+                            ? selectedUser.manager_stores || []
+                            : [],
+                        force_password_change: newRole === "demo" ? false : selectedUser.force_password_change,
+                        demo_view_privilege: newRole === "demo" ? selectedUser.demo_view_privilege || "super_admin" : null,
+                        demo_password: newRole === "demo" ? selectedUser.demo_password || "" : null,
                       });
                     }}
                   >
                     <option value="normal">Normal</option>
                     <option value="manager">Manager</option>
                     <option value="super_admin">super_admin</option>
+                    <option value="demo">Demo</option>
                   </select>
                 </div>
+
+                {selectedUser.role === "demo" && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Privilegio de Vista</label>
+                      <select
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                        value={selectedUser.demo_view_privilege || "super_admin"}
+                        onChange={(e) => {
+                          const newPrivilege = e.target.value;
+                          setSelectedUser({
+                            ...selectedUser,
+                            demo_view_privilege: newPrivilege,
+                            manager_stores: newPrivilege === "manager" ? selectedUser.manager_stores || [] : [],
+                          });
+                        }}
+                      >
+                        <option value="super_admin">super_admin (Todas las tiendas)</option>
+                        <option value="manager">Manager (Tiendas asignadas)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Contraseña Fija</label>
+                      <input
+                        type="text"
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                        value={selectedUser.demo_password || ""}
+                        onChange={(e) => {
+                          setSelectedUser({
+                            ...selectedUser,
+                            demo_password: e.target.value,
+                          });
+                        }}
+                        placeholder="Ingresa la contraseña fija"
+                      />
+                    </div>
+                  </>
+                )}
 
                 {selectedUser.role === "normal" && (
                   <div>
@@ -297,7 +351,7 @@ export default function UserManagement({ users, stores }) {
                   </div>
                 )}
 
-                {selectedUser.role === "manager" && (
+                {(selectedUser.role === "manager" || (selectedUser.role === "demo" && selectedUser.demo_view_privilege === "manager")) && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Tiendas asignadas</label>
                     <div className="mt-1 space-y-2">
@@ -326,25 +380,27 @@ export default function UserManagement({ users, stores }) {
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Forzar cambio de contraseña</label>
-                  <div className="mt-1">
-                    <input
-                      type="checkbox"
-                      checked={selectedUser.force_password_change || false}
-                      onChange={(e) => {
-                        setSelectedUser({
-                          ...selectedUser,
-                          force_password_change: e.target.checked,
-                        });
-                      }}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    />
-                    <span className="ml-2 text-sm text-gray-500">
-                      El usuario deberá cambiar su contraseña en el próximo inicio de sesión
-                    </span>
+                {selectedUser.role !== "demo" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Forzar cambio de contraseña</label>
+                    <div className="mt-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedUser.force_password_change || false}
+                        onChange={(e) => {
+                          setSelectedUser({
+                            ...selectedUser,
+                            force_password_change: e.target.checked,
+                          });
+                        }}
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                      <span className="ml-2 text-sm text-gray-500">
+                        El usuario deberá cambiar su contraseña en el próximo inicio de sesión
+                      </span>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="mt-6 flex justify-end space-x-3">
@@ -363,6 +419,8 @@ export default function UserManagement({ users, stores }) {
                       store_id: selectedUser.store_id,
                       manager_stores: selectedUser.manager_stores,
                       force_password_change: selectedUser.force_password_change,
+                      demo_view_privilege: selectedUser.demo_view_privilege,
+                      demo_password: selectedUser.demo_password,
                     })
                   }
                   disabled={loading}
@@ -408,4 +466,3 @@ export default function UserManagement({ users, stores }) {
     </div>
   );
 }
-

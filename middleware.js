@@ -8,13 +8,11 @@ export async function middleware(req) {
 
   const { pathname, origin, searchParams } = req.nextUrl;
 
-  // Log and clear sensitive query parameters
   if (searchParams.get("email") || searchParams.get("password")) {
     console.warn("Sensitive query parameters detected in middleware:", searchParams.toString());
     return NextResponse.redirect(new URL("/auth/login", origin));
   }
 
-  // Skip session checks for public routes and static assets
   if (
     pathname.startsWith("/auth") ||
     pathname.startsWith("/_next") ||
@@ -44,7 +42,6 @@ export async function middleware(req) {
     session = data.session;
 
     if (session) {
-      // Check for cached profile in cookie
       const cookies = req.cookies.get("profile");
       if (cookies) {
         try {
@@ -58,7 +55,7 @@ export async function middleware(req) {
       if (!profile) {
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
-          .select("id,role,force_password_change")
+          .select("id,role,force_password_change,demo_view_privilege")
           .eq("id", session.user.id)
           .single();
 
@@ -93,7 +90,7 @@ export async function middleware(req) {
   }
 
   if (session && pathname.startsWith("/admin")) {
-    if (profile?.role !== "super_admin") {
+    if (profile?.role !== "super_admin" && !(profile?.role === "demo" && profile?.demo_view_privilege === "super_admin")) {
       return NextResponse.redirect(new URL("/", origin));
     }
   }
