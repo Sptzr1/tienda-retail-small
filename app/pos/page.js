@@ -1,7 +1,7 @@
+// app/pos/page.js
 import PosLayout from "@/components/pos/pos-layout";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -9,57 +9,54 @@ export default async function PosPage({ searchParams }) {
   const cookieStore = await cookies();
   const supabase = createServerComponentClient({ cookies: () => cookieStore });
 
-  // Verificar si el usuario está autenticado
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-  if (!session) {
-    redirect("/auth/login?redirectedFrom=/pos");
+  if (sessionError || !session) {
+    return redirect("/auth/login?redirectedFrom=/pos");
   }
 
-  // Obtener perfil del usuario
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id, full_name, role, store_id")
     .eq("id", session.user.id)
     .single();
 
-  // Determinar qué tienda mostrar
-  let storeId = null;
-
-  if (profile.role === "superadmin" && searchParams?.store) {
-    // Superadmin: usar la tienda especificada en la URL
-    storeId = Number.parseInt(searchParams.store);
-  } else if (profile.role === "manager") {
-    // Manager: verificar tiendas asignadas y usar la de la URL si está presente
-    const { data: assignedStores } = await supabase
-      .from("manager_stores")
-      .select("store_id")
-      .eq("user_id", profile.id);
-
-    if (!assignedStores || assignedStores.length === 0) {
-      redirect("/"); // No tiene tiendas asignadas
-    }
-
-    const assignedStoreIds = assignedStores.map((s) => s.store_id);
-    if (searchParams?.store && assignedStoreIds.includes(Number.parseInt(searchParams.store))) {
-      storeId = Number.parseInt(searchParams.store);
-    } else {
-      storeId = assignedStoreIds[0]; // Usar la primera tienda asignada por defecto
-    }
-  } else if (profile.role === "normal" && profile.store_id) {
-    // Normal: usar su tienda asignada
-    storeId = profile.store_id;
-  } else {
-    // Si no tiene tienda asignada ni es un caso válido, redirigir
-    redirect("/");
+  if (profileError) {
+    console.error("Error fetching profile:", profileError);
+    return <div>Error al cargar el perfil</div>;
   }
 
-  // Fetch categories
+  let stores = [];
+  let selectedStoreId = searchParams?.store ? Number.parseInt(searchParams.store) : null;
+
+  if (profile.role === "super_admin") {
+    const { data: allStores } = await supabase.from("stores").select("id, name").order("id");
+    stores = allStores || [];
+    selectedStoreId = selectedStoreId && stores.some((s) => s.id === selectedStoreId) ? selectedStoreId : stores[0]?.id;
+  } else if (profile.role === "manager") {
+    const { data: assignedStores } = await supabase
+      .from("manager_stores")
+      .select("store_id, stores!manager_stores_store_id_fkey(id, name)")
+      .eq("user_id", profile.id);
+
+    stores = assignedStores?.map((s) => s.stores) || [];
+    selectedStoreId = selectedStoreId && stores.some((s) => s.id === selectedStoreId) ? selectedStoreId : stores[0]?.id;
+  } else if (profile.role === "demo") {
+    const { data: allStores } = await supabase.from("stores").select("id, name").order("id");
+    stores = allStores || [];
+    selectedStoreId = selectedStoreId && stores.some((s) => s.id === selectedStoreId) ? selectedStoreId : stores[0]?.id;
+  } else if (profile.role === "normal" && profile.store_id) {
+    const { data: store } = await supabase.from("stores").select("id, name").eq("id", profile.store_id).single();
+    stores = store ? [store] : [];
+    selectedStoreId = store?.id;
+  }
+
+  if (stores.length === 0 || !selectedStoreId) {
+    return <div>No tienes tiendas asignadas</div>;
+  }
+
   const { data: categories } = await supabase.from("categories").select("*").order("name");
 
-  // Fetch products with categories for the specific store
   const { data: products } = await supabase
     .from("products")
     .select(`
@@ -69,22 +66,26 @@ export default async function PosPage({ searchParams }) {
         name
       )
     `)
-    .eq("store_id", storeId)
+    .eq("store_id", selectedStoreId)
     .order("name");
 
-  // Fetch store info
-  const { data: store } = await supabase.from("stores").select("*").eq("id", storeId).single();
+  const { data: selectedStore } = await supabase.from("stores").select("*").eq("id", selectedStoreId).single();
 
-  if (!store) {
-    redirect("/");
-  }
+  const modules = {
+    super_admin: ['admin', 'products', 'stores', 'users', 'cart'],
+    manager: ['products', 'cart'],
+    normal: ['cart'],
+    demo: ['cart']
+  }[profile.role] || [];
 
   return (
     <PosLayout
       categories={categories || []}
       products={products || []}
-      store={store}
+      store={selectedStore || {}}
+      stores={stores}
       user={profile}
+      modules={modules}
     />
   );
 }

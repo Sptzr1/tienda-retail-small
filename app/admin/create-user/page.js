@@ -18,9 +18,8 @@ export default function CreateUserPage() {
   const [error, setError] = useState(null);
   const [tempPassword, setTempPassword] = useState(null);
   const [stores, setStores] = useState([]);
-  const [isAuthorized, setIsAuthorized] = useState(null); // null = checking, false = unauthorized, true = authorized
+  const [isAuthorized, setIsAuthorized] = useState(null);
 
-  // Check authorization (manager or superadmin)
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -38,7 +37,7 @@ export default function CreateUserPage() {
           .eq("id", session.user.id)
           .single();
 
-        if (profile?.role === "manager" || profile?.role === "superadmin") {
+        if (profile?.role === "super_admin") {
           setIsAuthorized(true);
         } else {
           setError("No tienes permiso para crear usuarios.");
@@ -53,7 +52,6 @@ export default function CreateUserPage() {
     checkAuth();
   }, []);
 
-  // Fetch stores
   useEffect(() => {
     if (!isAuthorized) return;
 
@@ -237,7 +235,8 @@ export default function CreateUserPage() {
               >
                 <option value="normal">Normal</option>
                 <option value="manager">Manager</option>
-                <option value="superadmin">Superadmin</option>
+                <option value="super_admin">Super Admin</option>
+                <option value="demo">Demo</option>
               </select>
             </div>
 

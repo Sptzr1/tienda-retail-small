@@ -1,12 +1,12 @@
+// components/session/session-manager.js
 "use client";
 
-import { useEffect, useCallback, useState, memo } from "react";
+import { useEffect, useCallback, useState, memo, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 import { getSupabaseBrowser } from "@/lib/supabase";
 import { useSessionContext } from "@/lib/session-context";
 
-// Global SessionManagerService
 const SessionManagerService = {
   intervalId: null,
   sessionData: null,
@@ -15,28 +15,35 @@ const SessionManagerService = {
   router: null,
   pathname: null,
   userId: null,
+  role: null,
   isInitialized: false,
   instanceId: uuidv4(),
   listeners: new Set(),
+  activityCleanup: null,
 
-  initialize(router, pathname, userId) {
-    if (this.isInitialized && this.userId === userId) return;
+  initialize(router, pathname, userId, role) {
+    if (this.isInitialized && this.userId === userId && this.role === role) {
+      console.log(`SessionManagerService already initialized [instance: ${this.instanceId}]`);
+      return;
+    }
     this.router = router;
     this.pathname = pathname;
     this.userId = userId;
+    this.role = role;
     this.isInitialized = true;
     console.log(`SessionManagerService initialized [instance: ${this.instanceId}]:`, new Date().toISOString());
     this.startSessionCheck();
-    this.setupActivityListeners();
+    this.activityCleanup = this.setupActivityListeners();
   },
 
   async checkSessionExpiration() {
-    console.log("Checking session expiration:", new Date().toISOString());
+    console.log(`Checking session expiration [instance: ${this.instanceId}]:`, new Date().toISOString());
     const supabase = getSupabaseBrowser();
     const { data: { session: authSession }, error: authError } = await supabase.auth.getSession();
 
     if (authError || !authSession?.user?.id || authSession.user.id !== this.userId) {
-      console.log("No valid auth session or user mismatch, redirecting to login");
+      console.log("No valid auth session or user mismatch, stopping checks");
+      this.cleanup();
       if (this.pathname !== "/auth/login" && this.pathname !== "/auth/register") {
         this.router.push("/auth/login");
       }
@@ -67,7 +74,7 @@ const SessionManagerService = {
     const timeUntilExpiration = (expiresAt - new Date()) / (1000 * 60);
     console.log("Time until expiration:", { minutes: timeUntilExpiration.toFixed(2) });
 
-    if (timeUntilExpiration <= 1 && timeUntilExpiration > 0) {
+    if (this.role !== "demo" && timeUntilExpiration <= 1 && timeUntilExpiration > 0) {
       console.log("Showing extension prompt, time left:", timeUntilExpiration.toFixed(2));
       this.showExtensionPrompt = true;
       setTimeout(async () => {
@@ -97,7 +104,7 @@ const SessionManagerService = {
       .single();
 
     if (error) {
-      console.error("Error creating session:", error);
+      console.error("Error creating session:", error.message);
       return null;
     }
 
@@ -106,6 +113,13 @@ const SessionManagerService = {
   },
 
   async updateSessionActivity(sessionId) {
+    if (this.role === "demo") {
+      console.log("Demo users cannot extend sessions");
+      this.notifyListeners({
+        demoMessage: "Usuarios demo no pueden extender sesiones. Contacta a un super admin para actualizar tu cuenta.",
+      });
+      return;
+    }
     const supabase = getSupabaseBrowser();
     const newExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
@@ -115,7 +129,7 @@ const SessionManagerService = {
       .eq("id", sessionId);
 
     if (error) {
-      console.error("Error updating session activity:", error);
+      console.error("Error updating session activity:", error.message);
       return;
     }
 
@@ -141,7 +155,7 @@ const SessionManagerService = {
       .single();
 
     if (error) {
-      console.error("Error fetching session:", error);
+      console.error("Error fetching session:", error.message);
       return null;
     }
 
@@ -154,6 +168,13 @@ const SessionManagerService = {
   },
 
   async handleExtendSession() {
+    if (this.role === "demo") {
+      console.log("Demo users cannot extend sessions");
+      this.notifyListeners({
+        demoMessage: "Usuarios demo no pueden extender sesiones. Contacta a un super admin para actualizar tu cuenta.",
+      });
+      return;
+    }
     if (this.sessionData?.id) {
       console.log("Extending session:", this.sessionData.id);
       await this.updateSessionActivity(this.sessionData.id);
@@ -188,11 +209,17 @@ const SessionManagerService = {
 
   startSessionCheck() {
     if (!this.intervalId) {
-      console.log("Starting global session check interval:", new Date().toISOString());
+      console.log(`Starting global session check interval [instance: ${this.instanceId}]:`, new Date().toISOString());
       this.intervalId = setInterval(() => {
-        console.log("Interval tick:", new Date().toISOString());
+        console.log(`Interval tick [instance: ${this.instanceId}]:`, new Date().toISOString());
+        if (this.pathname.startsWith("/auth")) {
+          console.log("Skipping session check on auth route");
+          return;
+        }
         this.checkSessionExpiration();
-      }, 60 * 1000);
+      }, 5 * 60 * 1000); // 5 minutes
+    } else {
+      console.log(`Session check interval already running [instance: ${this.instanceId}]`);
     }
   },
 
@@ -205,18 +232,24 @@ const SessionManagerService = {
       };
     };
 
-    const debouncedUpdateSession = debounce((sessionId) => this.updateSessionActivity(sessionId), 5000);
+    const debouncedUpdateSession = debounce((sessionId) => this.updateSessionActivity(sessionId), 30000); // 30s
 
     const handleActivity = () => {
-      console.log("Activity detected:", new Date().toISOString());
       if (this.sessionData?.id) {
         debouncedUpdateSession(this.sessionData.id);
       }
     };
 
-    window.addEventListener("mousemove", handleActivity);
-    window.addEventListener("keydown", handleActivity);
-    window.addEventListener("click", handleActivity);
+    window.addEventListener("mousemove", handleActivity, { passive: true });
+    window.addEventListener("keydown", handleActivity, { passive: true });
+    window.addEventListener("click", handleActivity, { passive: true });
+
+    return () => {
+      window.removeEventListener("mousemove", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("click", handleActivity);
+      console.log(`Activity listeners removed [instance: ${this.instanceId}]`);
+    };
   },
 
   addListener(callback) {
@@ -230,31 +263,51 @@ const SessionManagerService = {
   notifyListeners(state) {
     this.listeners.forEach((callback) => callback(state));
   },
+
+  cleanup() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    if (this.activityCleanup) {
+      this.activityCleanup();
+      this.activityCleanup = null;
+    }
+    this.listeners.clear();
+    this.isInitialized = false;
+    console.log(`SessionManagerService cleaned up [instance: ${this.instanceId}]`);
+  },
 };
 
-// Memoized UI component
 const SessionManagerComponent = memo(({ children }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { userId } = useSessionContext();
+  const { userId, role, isInitialized } = useSessionContext();
   const [state, setState] = useState({
     sessionData: null,
     showExtensionPrompt: false,
     showLogoutMessage: false,
+    demoMessage: null,
   });
+  const initializedRef = useRef(false);
 
   useEffect(() => {
-    console.log("SessionManagerComponent mounted:", new Date().toISOString());
-    if (userId) {
-      SessionManagerService.initialize(router, pathname, userId);
+    if (initializedRef.current) {
+      console.log(`SessionManagerComponent skipping reinitialization [instance: ${SessionManagerService.instanceId}]`);
+      return;
+    }
+    console.log(`SessionManagerComponent mounted [instance: ${SessionManagerService.instanceId}]:`, new Date().toISOString());
+    if (isInitialized && userId && role) {
+      SessionManagerService.initialize(router, pathname, userId, role);
+      initializedRef.current = true;
     }
     const listener = (newState) => setState(newState);
     SessionManagerService.addListener(listener);
     return () => {
-      console.log("SessionManagerComponent unmounted:", new Date().toISOString());
+      console.log(`SessionManagerComponent unmounted [instance: ${SessionManagerService.instanceId}]:`, new Date().toISOString());
       SessionManagerService.removeListener(listener);
     };
-  }, [router, pathname, userId]);
+  }, [router, pathname, userId, role, isInitialized]);
 
   const handleExtendSession = useCallback(() => {
     SessionManagerService.handleExtendSession();
@@ -300,8 +353,26 @@ const SessionManagerComponent = memo(({ children }) => {
               Sesión cerrada
             </h3>
             <p className="text-gray-600 mb-6">
-              Tu sesión ha sido cerrada por inactividad. Redirigiendo al inicio...
+              Tu sesión ha been cerrada por inactividad. Redirigiendo al inicio...
             </p>
+          </div>
+        </div>
+      )}
+      {state.demoMessage && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              Acceso Restringido
+            </h3>
+            <p className="text-gray-600 mb-6">{state.demoMessage}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setState((prev) => ({ ...prev, demoMessage: null }))}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 text-gray-700 font-medium"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,123 +1,216 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { getSupabaseBrowser } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function UserProfile({ user, profile }) {
-  const router = useRouter()
-  const [loading, setLoading] = useState(false)
-  const [fullName, setFullName] = useState(profile?.full_name || "")
-  const [message, setMessage] = useState(null)
-  const [error, setError] = useState(null)
+export default function UserProfile() {
+  const router = useRouter();
+  const [profile, setProfile] = useState(null);
+  const [newFullName, setNewFullName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const supabase = getSupabaseBrowser();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        router.push("/auth/login");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, role, force_password_change")
+        .eq("id", session.user.id)
+        .single();
+
+      if (error) {
+        setError("Error al cargar el perfil");
+        return;
+      }
+
+      setProfile(data);
+      setNewFullName(data.full_name);
+    };
+
+    fetchProfile();
+  }, [router]);
 
   const handleUpdateProfile = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    setMessage(null)
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+
+    if (newPassword && newPassword !== confirmPassword) {
+      setError("Las contraseñas no coinciden");
+      setLoading(false);
+      return;
+    }
 
     try {
-      const supabase = getSupabaseBrowser()
+      const supabase = getSupabaseBrowser();
+      const { data: { session } } = await supabase.auth.getSession();
 
-      const { error } = await supabase.from("profiles").update({ full_name: fullName }).eq("id", user.id)
+      if (!session) {
+        setError("No estás autenticado");
+        setLoading(false);
+        return;
+      }
 
-      if (error) throw error
+      const updates = {};
+      if (newFullName !== profile.full_name) {
+        updates.full_name = newFullName;
+      }
+      if (newPassword) {
+        updates.force_password_change = false;
+      }
 
-      setMessage("Perfil actualizado correctamente")
-      router.refresh()
+      if (Object.keys(updates).length > 0) {
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update(updates)
+          .eq("id", session.user.id);
+
+        if (profileError) {
+          setError("Error al actualizar el perfil");
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (newPassword) {
+        const { error: authError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (authError) {
+          setError("Error al actualizar la contraseña");
+          setLoading(false);
+          return;
+        }
+      }
+
+      setSuccess("Perfil actualizado exitosamente");
+      setProfile({ ...profile, full_name: newFullName, force_password_change: false });
+      setNewPassword("");
+      setConfirmPassword("");
     } catch (error) {
-      console.error("Error updating profile:", error)
-      setError(error.message || "Error al actualizar el perfil")
+      setError("Error al actualizar el perfil");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
+  };
+
+  if (!profile) {
+    return <div className="text-center py-12">Cargando...</div>;
   }
 
+  const isDemo = profile.role === "demo";
+
   return (
-    <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-      <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
-        <div>
-          <h3 className="text-lg leading-6 font-medium text-gray-900">Perfil de Usuario</h3>
-          <p className="mt-1 max-w-2xl text-sm text-gray-500">Información personal y detalles de la cuenta</p>
-        </div>
-        <Link
-          href="/"
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-        >
-          Volver al inicio
-        </Link>
-      </div>
+    <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="px-6 py-8">
+          <h2 className="text-2xl font-bold text-gray-900 text-center">
+            Perfil de usuario
+          </h2>
+          <p className="text-center text-sm text-gray-500 mt-2">
+            {isDemo ? "Usuario Demo" : `Usuario: ${profile.full_name}`}
+          </p>
 
-      <div className="border-t border-gray-200">
-        <dl>
-          <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-            <dt className="text-sm font-medium text-gray-500">Correo electrónico</dt>
-            <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{user.email}</dd>
-          </div>
+          {profile.force_password_change && (
+            <div className="mt-4 bg-yellow-50 p-4 rounded-md">
+              <p className="text-sm text-yellow-700">
+                Por favor, cambia tu contraseña temporal.
+              </p>
+            </div>
+          )}
 
-          <div className="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-            <dt className="text-sm font-medium text-gray-500">Rol</dt>
-            <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-              {profile?.is_admin ? "Administrador" : "Usuario"}
-            </dd>
-          </div>
+          <form className="mt-8 space-y-6" onSubmit={handleUpdateProfile}>
+            <div>
+              <label htmlFor="fullName" className="block text-sm font-medium text-gray-700">
+                Nombre completo
+              </label>
+              <input
+                id="fullName"
+                name="fullName"
+                type="text"
+                value={newFullName}
+                onChange={(e) => setNewFullName(e.target.value)}
+                disabled={isDemo}
+                className={`mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${isDemo ? "bg-gray-100 cursor-not-allowed" : ""}`}
+              />
+            </div>
 
-          <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-            <dt className="text-sm font-medium text-gray-500">Tienda asignada</dt>
-            <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-              {profile?.stores?.name || "Sin asignar"}
-            </dd>
-          </div>
+            <div>
+              <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700">
+                Nueva contraseña
+              </label>
+              <input
+                id="newPassword"
+                name="newPassword"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={isDemo}
+                className={`mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${isDemo ? "bg-gray-100 cursor-not-allowed" : ""}`}
+              />
+            </div>
 
-          <div className="bg-white px-4 py-5 sm:px-6">
-            <form onSubmit={handleUpdateProfile}>
-              <div className="space-y-6">
-                <div>
-                  <label htmlFor="full-name" className="block text-sm font-medium text-gray-700">
-                    Nombre completo
-                  </label>
-                  <div className="mt-1">
-                    <input
-                      id="full-name"
-                      name="fullName"
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                    />
-                  </div>
-                </div>
+            <div>
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
+                Confirmar contraseña
+              </label>
+              <input
+                id="confirmPassword"
+                name="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={isDemo}
+                className={`mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${isDemo ? "bg-gray-100 cursor-not-allowed" : ""}`}
+              />
+            </div>
 
-                {error && (
-                  <div className="rounded-md bg-red-50 p-4">
-                    <div className="text-sm text-red-700">{error}</div>
-                  </div>
-                )}
-
-                {message && (
-                  <div className="rounded-md bg-green-50 p-4">
-                    <div className="text-sm text-green-700">{message}</div>
-                  </div>
-                )}
-
-                <div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-                  >
-                    {loading ? "Actualizando..." : "Actualizar perfil"}
-                  </button>
-                </div>
+            {error && (
+              <div className="rounded-md bg-red-50 p-4">
+                <div className="text-sm text-red-700">{error}</div>
               </div>
-            </form>
-          </div>
-        </dl>
+            )}
+
+            {success && (
+              <div className="rounded-md bg-green-50 p-4">
+                <div className="text-sm text-green-700">{success}</div>
+              </div>
+            )}
+
+            {isDemo && (
+              <div className="rounded-md bg-yellow-50 p-4">
+                <p className="text-sm text-yellow-700">
+                  Los usuarios demo no pueden modificar su perfil. Contacta a un super admin para actualizar tu cuenta.
+                </p>
+              </div>
+            )}
+
+            <div>
+              <button
+                type="submit"
+                disabled={loading || isDemo}
+                className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 ${isDemo ? "cursor-not-allowed" : ""}`}
+              >
+                {loading ? "Actualizando..." : "Actualizar perfil"}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
-  )
+  );
 }
-

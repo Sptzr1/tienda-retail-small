@@ -1,3 +1,4 @@
+// components/pos/pos-layout.js
 "use client";
 
 import { useState, useEffect } from "react";
@@ -9,7 +10,7 @@ import { Home, LogOut } from "lucide-react";
 import Link from "next/link";
 import { getSupabaseBrowser } from "@/lib/supabase";
 
-export default function PosLayout({ categories, products, store: initialStore, user }) {
+export default function PosLayout({ categories, products, store: initialStore, stores, user, modules }) {
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [filteredProducts, setFilteredProducts] = useState(products);
@@ -17,65 +18,53 @@ export default function PosLayout({ categories, products, store: initialStore, u
   const [exchangeRate, setExchangeRate] = useState(null);
   const [rateError, setRateError] = useState(null);
   const [store, setStore] = useState(initialStore);
+  const [demoMessage, setDemoMessage] = useState(null);
 
-  // Fetch exchange rate
+  const isDemo = user.role === "demo";
+
   useEffect(() => {
-    const fetchRate = async () => {
+    let intervalId;
+
+    const fetchData = async () => {
       const supabase = getSupabaseBrowser();
-      const { data, error } = await supabase
+
+      // Fetch exchange rate
+      const { data: rateData, error: rateError } = await supabase
         .from("exchange_rates")
         .select("rate")
         .order("created_at", { ascending: false })
         .limit(1);
 
-      if (error || !data || data.length === 0) {
-        console.error("Error fetching exchange rate:", { error, data });
+      if (rateError || !rateData || rateData.length === 0) {
+        console.error("Error fetching exchange rate:", { rateError, rateData });
         setRateError("No se pudo cargar la tasa de cambio. Contacta al administrador.");
       } else {
-        const rate = parseFloat(data[0].rate);
+        const rate = parseFloat(rateData[0].rate);
         setExchangeRate(isNaN(rate) ? null : rate);
       }
-    };
-    fetchRate();
-  }, []);
 
-  // Fetch store dynamically
-  useEffect(() => {
-    const fetchStore = async () => {
-      const supabase = getSupabaseBrowser();
-      const storeId = initialStore.id;
-      const { data, error } = await supabase
-        .from("stores")
-        .select("id, name")
-        .eq("id", storeId)
-        .single();
+      // Use initialStore from props, only fetch if critical data is missing
+      if (initialStore.id && (!initialStore.name || Object.keys(initialStore).length < 2)) {
+        const { data: storeData, error: storeError } = await supabase
+          .from("stores")
+          .select("id, name")
+          .eq("id", initialStore.id)
+          .single();
 
-      if (error || !data) {
-        console.error("Error fetching store:", error);
-      } else {
-        setStore(data);
+        if (storeError || !storeData) {
+          console.error("Error fetching store:", storeError);
+        } else {
+          setStore(storeData);
+        }
       }
     };
 
-    fetchStore();
+    fetchData(); // Initial fetch
+    intervalId = setInterval(fetchData, 60000); // Fetch every minute
 
-    // Subscribe to store updates
-    const supabase = getSupabaseBrowser();
-    const channel = supabase
-      .channel("stores")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "stores", filter: `id=eq.${initialStore.id}` },
-        (payload) => {
-          setStore(payload.new);
-        }
-      )
-      .subscribe();
+    return () => clearInterval(intervalId); // Cleanup
+  }, [initialStore]);
 
-    return () => supabase.removeChannel(channel);
-  }, [initialStore.id]);
-
-  // Filter products when category changes
   useEffect(() => {
     if (selectedCategory) {
       setFilteredProducts(products.filter((product) => product.category_id === selectedCategory));
@@ -84,8 +73,11 @@ export default function PosLayout({ categories, products, store: initialStore, u
     }
   }, [selectedCategory, products]);
 
-  // Add product to cart
   const addToCart = (product) => {
+    if (isDemo) {
+      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
+      return;
+    }
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.id === product.id);
 
@@ -99,8 +91,11 @@ export default function PosLayout({ categories, products, store: initialStore, u
     });
   };
 
-  // Update cart item quantity
   const updateQuantity = (productId, quantity) => {
+    if (isDemo) {
+      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
+      return;
+    }
     setCart((prevCart) => {
       if (quantity <= 0) {
         return prevCart.filter((item) => item.id !== productId);
@@ -110,13 +105,19 @@ export default function PosLayout({ categories, products, store: initialStore, u
     });
   };
 
-  // Remove item from cart
   const removeItem = (productId) => {
+    if (isDemo) {
+      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
+      return;
+    }
     setCart((prevCart) => prevCart.filter((item) => item.id !== productId));
   };
 
-  // Clear cart
   const clearCart = () => {
+    if (isDemo) {
+      setDemoMessage("Usuarios demo no pueden modificar el carrito. Contacta a un super admin para actualizar tu cuenta.");
+      return;
+    }
     setCart([]);
   };
 
@@ -131,13 +132,31 @@ export default function PosLayout({ categories, products, store: initialStore, u
     }
   };
 
+  const handleStoreChange = (storeId) => {
+    router.push(`/?store=${storeId}`);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-100">
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{store?.name || "Punto de Venta"}</h1>
-            <p className="text-sm text-gray-500">Usuario: {user?.full_name || "Usuario"}</p>
+            <p className="text-sm text-gray-500">Usuario: {user?.full_name || "Usuario"} {isDemo && "(Demo)"}</p>
+            {stores.length > 1 && (user.role === "super_admin" || user.role === "manager" || user.role === "demo") && (
+              <select
+                value={store?.id || ""}
+                onChange={(e) => handleStoreChange(e.target.value)}
+                className="mt-2 border border-gray-300 rounded-md p-1"
+              >
+                <option value="" disabled>Selecciona una tienda</option>
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="flex space-x-4">
             <Link
@@ -157,6 +176,40 @@ export default function PosLayout({ categories, products, store: initialStore, u
           </div>
         </div>
       </header>
+
+      {demoMessage && (
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 m-4 rounded">
+          <p>{demoMessage}</p>
+          <button
+            onClick={() => setDemoMessage(null)}
+            className="mt-2 text-sm underline"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+
+      {modules.length > 0 && (
+        <div className="bg-white p-4 m-4 rounded shadow">
+          <h2 className="text-lg font-semibold">Módulos</h2>
+          <ul className="mt-2 space-y-2">
+            {modules.map((module) => (
+              <li key={module}>
+                {module === 'cart' && isDemo ? (
+                  'Cart (Read-Only)'
+                ) : (
+                  <Link
+                    href={module === 'cart' ? '/pos' : `/pos/${module}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {module.charAt(0).toUpperCase() + module.slice(1)}
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         <div className="w-full md:w-2/3 flex flex-col overflow-hidden">

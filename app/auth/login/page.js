@@ -1,165 +1,106 @@
-"use client";
 
+"use client";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { getSupabaseBrowser, createSession } from "@/lib/supabase";
-import { v4 as uuidv4 } from "uuid";
-import { useSessionContext } from "@/lib/session-context";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const { setSession } = useSessionContext();
+  const [isCleaned, setIsCleaned] = useState(false);
+
+  // Clear sensitive query parameters
   useEffect(() => {
-    async function performDeferredTasks() {
-      const supabase = getSupabaseBrowser();
-      try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-        if (userError || !user) {
-          console.log("No user logged in:", userError?.message || "No user data");
-          return;
-        }
-
-        console.log("User found:", { userId: user.id, email: user.email });
-
-        const { data: session, error: sessionError } = await supabase
-          .from("sessions")
-          .select("id, expires_at, is_valid")
-          .eq("user_id", user.id)
-          .eq("is_valid", true)
-          .gte("expires_at", new Date().toISOString())
-          .single();
-
-        if (sessionError || !session) {
-          console.log("No valid session found:", sessionError?.message || "No session data");
-          await supabase.auth.signOut();
-          return;
-        }
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id, role, store_id")
-          .eq("id", user.id)
-          .single();
-
-        if (profileError) {
-          console.error("Error fetching profile:", profileError);
-          setError("Error al cargar el perfil.");
-          return;
-        }
-
-        console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
-
-        router.push("/");
-      } catch (err) {
-        console.error("Unexpected error in performDeferredTasks:", err);
-        setError("Error inesperado al procesar la sesión.");
-      }
+    if (searchParams.get("email") || searchParams.get("password")) {
+      console.log("Clearing sensitive query parameters:", searchParams.toString());
+      router.replace("/auth/login");
+      setIsCleaned(true);
+    } else {
+      setIsCleaned(true);
     }
-
-    performDeferredTasks();
-  }, [router]);
+  }, [searchParams, router]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     if (loading) return;
-
-    setLoading(true);
     setError(null);
-
-    const trimmedEmail = email.trim();
-    const trimmedPassword = password.trim();
-
-    if (!trimmedEmail || !trimmedPassword) {
-      setError("Por favor, completa todos los campos.");
-      setLoading(false);
-      return;
-    }
-
-    console.log("Attempting login:", { email: trimmedEmail });
-
-    const supabase = getSupabaseBrowser();
+    setLoading(true);
 
     try {
-      let signInError;
-      let data;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          ({ data, error: signInError } = await supabase.auth.signInWithPassword({
-            email: trimmedEmail,
-            password: trimmedPassword,
-          }));
-          if (!signInError) break;
-          console.warn(`Login attempt ${attempt} failed:`, signInError);
-          if (attempt === 3) throw signInError;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        } catch (retryError) {
-          console.error(`Login retry ${attempt} error:`, retryError);
-          throw retryError;
+      const supabase = getSupabaseBrowser();
+      console.log("Attempting login for:", email);
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
+        console.error("Login auth error:", authError.message, authError.status);
+        if (authError.status === 429) {
+          setError("Demasiados intentos. Por favor, intenta de nuevo.");
+        } else if (authError.message.includes("Invalid login credentials")) {
+          setError("Correo o contraseña incorrectos");
+        } else {
+          setError(`Error de autenticación: ${authError.message}`);
         }
-      }
-
-      if (signInError) {
-        console.error("Sign-in error details:", signInError);
-        throw new Error(signInError.message);
-      }
-
-      const { user, session } = data;
-
-      console.log("Login successful:", { userId: user.id, email: user.email });
-
-      let sessionId = session?.id;
-      if (!sessionId) {
-        console.warn("No session ID from auth, generating UUID");
-        sessionId = uuidv4();
-      }
-  
-      try {
-        await createSession(supabase, sessionId, user.id, navigator.userAgent);
-        setSession(sessionId, user.id); // Update context
-      } catch (sessionError) {
-        console.error("Session creation failed:", sessionError);
+        setLoading(false);
+        return;
       }
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("id, role, store_id")
-        .eq("id", user.id)
+        .select("id, role, force_password_change")
+        .eq("id", data.user.id)
         .single();
 
       if (profileError) {
-        console.error("Profile fetch error:", profileError);
-        throw new Error(`Profile fetch failed: ${profileError.message}`);
+        console.error("Error fetching profile:", profileError.message);
+        setError("Error al cargar el perfil");
+        setLoading(false);
+        return;
       }
 
-      console.log("Profile fetched:", { role: profile.role, store_id: profile.store_id });
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ last_login: new Date().toISOString() })
+        .eq("id", data.user.id);
 
-      setEmail("");
-      setPassword("");
-      router.push("/");
-    } catch (err) {
-      console.error("Login error:", err);
-      setError("Error al iniciar sesión: " + (err.message || "Credenciales inválidas"));
-      setEmail("");
-      setPassword("");
-    } finally {
+      if (updateError) {
+        console.error("Error updating last_login:", updateError.message);
+        // Error thrown here for user e29bf31e-228f-4a72-bd5b-d20f45c23111
+      }
+
+      console.log("Login successful, redirecting:", { userId: data.user.id, role: profile.role });
+      if (profile.force_password_change) {
+        router.push("/profile");
+      } else {
+        router.push("/");
+      }
+    } catch (error) {
+      console.error("Login error:", error.message);
+      setError("Error al iniciar sesión: " + error.message);
       setLoading(false);
     }
   };
 
+  if (!isCleaned) {
+    return null;
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Iniciar Sesión
+            Iniciar sesión
           </h2>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleLogin} method="POST">
+        <form method="post" onSubmit={handleLogin}>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
               <label htmlFor="email" className="sr-only">
@@ -167,7 +108,9 @@ export default function LoginPage() {
               </label>
               <input
                 id="email"
+                name="email"
                 type="email"
+                autoComplete="off"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Correo electrónico"
@@ -182,7 +125,9 @@ export default function LoginPage() {
               </label>
               <input
                 id="password"
+                name="password"
                 type="password"
+                autoComplete="off"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Contraseña"
@@ -194,7 +139,9 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <p className="text-red-600 text-sm text-center">{error}</p>
+            <div className="rounded-md bg-red-50 p-4">
+              <div className="text-sm text-red-700">{error}</div>
+            </div>
           )}
 
           <div>
@@ -203,10 +150,18 @@ export default function LoginPage() {
               disabled={loading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              {loading ? "Cargando..." : "Iniciar Sesión"}
+              {loading ? "Iniciando sesión..." : "Iniciar sesión"}
             </button>
           </div>
         </form>
+        <div className="text-center">
+          <Link
+            href="/auth/register"
+            className="font-medium text-blue-600 hover:text-blue-500"
+          >
+            ¿No tienes una cuenta? Regístrate
+          </Link>
+        </div>
       </div>
     </div>
   );

@@ -3,12 +3,11 @@ import { randomBytes } from "crypto";
 
 export async function POST(request) {
   const supabase = createClient(
-    process.env.SUPABASE_URL, // Non-public URL
+    process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  // Auth check
   const authHeader = request.headers.get("Authorization");
   if (!authHeader) {
     return new Response(JSON.stringify({ error: "No autorizado" }), {
@@ -30,8 +29,8 @@ export async function POST(request) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profileError || (profile.role !== "manager" && profile.role !== "superadmin")) {
-    return new Response(JSON.stringify({ error: "No autorizado: Solo managers o superadmins pueden crear usuarios" }), {
+  if (profileError || profile.role !== "super_admin") {
+    return new Response(JSON.stringify({ error: "No autorizado: Solo super admins pueden crear usuarios" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
     });
@@ -40,9 +39,14 @@ export async function POST(request) {
   try {
     const { email, fullName, role, storeId, assignedStores } = await request.json();
 
-    // Validate input
     if (!email || !fullName || !role) {
       return new Response(JSON.stringify({ error: "Faltan campos requeridos: email, fullName, role" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (!["super_admin", "manager", "normal", "demo"].includes(role)) {
+      return new Response(JSON.stringify({ error: "Rol inválido" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
@@ -60,10 +64,8 @@ export async function POST(request) {
       });
     }
 
-    // Generate secure temp password
-    const tempPass = randomBytes(8).toString("hex"); // 16 chars, secure
+    const tempPass = randomBytes(8).toString("hex");
 
-    // Create user
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password: tempPass,
@@ -78,11 +80,11 @@ export async function POST(request) {
       });
     }
 
-    // Parallelize inserts
     const profileData = {
       id: authData.user.id,
       full_name: fullName,
       role,
+      is_admin: role === "super_admin",
       store_id: role === "normal" ? Number.parseInt(storeId) || null : null,
       force_password_change: true,
     };
@@ -90,7 +92,7 @@ export async function POST(request) {
     const tempPassData = {
       user_id: authData.user.id,
       temp_password: tempPass,
-      used: false, // Align with login/page.js
+      used: false,
     };
 
     const managerStoresData = role === "manager" && assignedStores.length > 0
@@ -106,9 +108,7 @@ export async function POST(request) {
       managerStoresData ? supabase.from("manager_stores").insert(managerStoresData) : Promise.resolve({ error: null }),
     ]);
 
-    // Check for errors and rollback if needed
     if (profileResult.error || tempPassResult.error || managerStoresResult.error) {
-      // Delete user to rollback
       await supabase.auth.admin.deleteUser(authData.user.id);
       const errorMsg = profileResult.error?.message ||
                        tempPassResult.error?.message ||
